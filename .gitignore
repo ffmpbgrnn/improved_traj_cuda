@@ -1,0 +1,4 @@
+.build_release/
+release/
+test_sequences/
+*.[ao]
