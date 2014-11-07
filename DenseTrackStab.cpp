@@ -9,9 +9,24 @@ using namespace cv;
 using namespace cv::gpu;
 
 int show_track = 0; // set show_track = 1, if you want to visualize the trajectories
+    int calcSize(int octave, int layer)
+    {
+        /* Wavelet size at first layer of first octave. */
+        const int HAAR_SIZE0 = 9;
+
+        /* Wavelet size increment between layers. This should be an even number,
+         such that the wavelet sizes in an octave are either all even or all odd.
+         This ensures that when looking for the neighbours of a sample, the layers
+
+         above and below are aligned correctly. */
+        const int HAAR_SIZE_INC = 6;
+
+        return (HAAR_SIZE0 + HAAR_SIZE_INC * layer) << octave;
+    }
 
 int main(int argc, char** argv)
 {
+	gpu::setDevice(1);
 	VideoCapture capture;
 	char* video = argv[1];
 	int flag = arg_parse(argc, argv);
@@ -68,9 +83,10 @@ int main(int argc, char** argv)
 	std::vector<std::list<Track> > xyScaleTracks;
 	int init_counter = 0; // indicate when to detect new feature points
     
-    SURF_GPU surf;
-
+        SURF_GPU surf;
+        surf.nOctaves = 2;
 	while(true) {
+                std::cout << "1" << std::endl;
 		Mat frame;
 		int i, c;
 
@@ -79,6 +95,7 @@ int main(int argc, char** argv)
 		if(frame.empty())
 			break;
 
+                std::cout << "2" << std::endl;
 		if(frame_num < start_frame || frame_num > end_frame) {
 			frame_num++;
 			continue;
@@ -102,7 +119,7 @@ int main(int argc, char** argv)
 
 			BuildPry(sizes, CV_32FC(5), d_prev_poly_pyr);
 			BuildPry(sizes, CV_32FC(5), d_poly_pyr);
-			BuildPry(sizes, CV_32FC(5), d_poly_warp_pyr);
+			BuildPry(sizes, CV_32FC1, d_poly_warp_pyr);
 
 			xyScaleTracks.resize(scale_num);
 
@@ -136,7 +153,17 @@ int main(int argc, char** argv)
 			 * is d_prev_kpts_surf in GPU or CPU?
 			 * or use GpuMat?
 			 */
-    		surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, prev_desc_surf);
+                printf("ook\n");
+    		// surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, prev_desc_surf);
+                std::cout << d_prev_grey.cols << " " << d_prev_grey.rows << std::endl;
+	        const int layer_rows = d_prev_grey.rows >> (surf.nOctaves - 1);
+                const int layer_cols = d_prev_grey.cols >> (surf.nOctaves - 1);
+                const int min_margin = ((calcSize((surf.nOctaves - 1), 2) >> 1) >> (surf.nOctaves - 1)) + 1;
+		std::cout << layer_rows - 2 * min_margin << " " << layer_rows << " " << min_margin << std::endl;
+                std::cout << surf.nOctaves << std::endl;
+    		surf(d_prev_grey, GpuMat(), d_prev_kpts_surf, prev_desc_surf);
+
+                printf("ook\n");
 
 			frame_num++;
 			continue;
@@ -150,7 +177,8 @@ int main(int argc, char** argv)
 			InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
 
 
-    	surf(d_grey, d_human_mask, d_kpts_surf, desc_surf);
+    	// surf(d_grey, d_human_mask, d_kpts_surf, desc_surf);
+    	surf(d_grey, GpuMat(), d_kpts_surf, desc_surf);
     	std::vector<KeyPoint> prev_kpts_surf, kpts_surf;
 
     	surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
@@ -219,16 +247,18 @@ int main(int argc, char** argv)
 				int y = std::min<int>(std::max<int>(cvRound(prev_point.y), 0), height-1);
 
 				Point2f point;
-				point.x = prev_point.x + d_flow_pyr_x[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x];
-				point.y = prev_point.y + d_flow_pyr_y[iScale].ptr<float>(y)[x]; //.ptr<float>(y)[2*x+1];
+                                Mat flow_x(d_flow_pyr_x[iScale]), flow_y(d_flow_pyr_y[iScale]);
+				point.x = prev_point.x + flow_x.ptr<float>(y)[x];
+				point.y = prev_point.y + flow_y.ptr<float>(y)[x];
  
 				if(point.x <= 0 || point.x >= width || point.y <= 0 || point.y >= height) {
 					iTrack = tracks.erase(iTrack);
 					continue;
 				}
-
-				iTrack->disp[index].x = d_flow_warp_pyr_x[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x];
-				iTrack->disp[index].y = d_flow_warp_pyr_y[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x+1];
+				
+				Mat flow_warp_x(d_flow_warp_pyr_x[iScale]), flow_warp_y(d_flow_warp_pyr_y[iScale]);
+				iTrack->disp[index].x = flow_warp_x.ptr<float>(y)[x];
+				iTrack->disp[index].y = flow_warp_y.ptr<float>(y)[x];
 
 				
 				iTrack->addPoint(point);

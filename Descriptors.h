@@ -543,7 +543,7 @@ void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x,
 	if(v_prev_pts.size() == 0)
 		return;
 	
-	// Mat flow_x, flow_y;
+	Mat flow_x(d_flow_x), flow_y(d_flow_y);
  //    d_flow_x.download(flow_x);
 
 	for(unsigned int i = 0; i < v_prev_pts.size(); i++) {
@@ -551,7 +551,7 @@ void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x,
 		int y = std::min<int>(std::max<int>(cvRound(v_prev_pts[i].y), 0), height-1);
 
 		// const float* f = flow.ptr<float>(y);
-		pts.push_back(Point2f(x+d_flow_x.ptr<float>(y)[x], y+d_flow_y.ptr<float>(y)[x]));
+		pts.push_back(Point2f(x+flow_x.ptr<float>(y)[x], y+flow_y.ptr<float>(y)[x]));
 	}
 }
 
