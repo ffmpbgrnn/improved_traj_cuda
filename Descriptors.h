@@ -2,6 +2,8 @@
 #define DESCRIPTORS_H_
 
 #include "DenseTrackStab.h"
+#include "Utils.h"
+
 using namespace cv;
 
 // get the rectangle for computing the descriptor
@@ -292,13 +294,13 @@ void InitPry(const Mat& frame, std::vector<float>& scales, std::vector<Size>& si
 	}
 }
 
-void BuildPry(const std::vector<Size>& sizes, const int type, std::vector<Mat>& grey_pyr)
+void BuildPry(const std::vector<Size>& sizes, const int type, std::vector<GpuMat>& pyr)
 {
 	int nlayers = sizes.size();
-	grey_pyr.resize(nlayers);
+	pyr.resize(nlayers);
 
 	for(int i = 0; i < nlayers; i++)
-		grey_pyr[i].create(sizes[i], type);
+		pyr[i].create(sizes[i], type);
 }
 
 void DrawTrack(const std::vector<Point2f>& point, const int index, const float scale, Mat& image)
@@ -470,7 +472,7 @@ static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int fl
 }
 
 void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyPoint>& kpts,
-				  const Mat& prev_desc, const Mat& desc, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts)
+				  const GpuMat& prev_desc, const GpuMat& desc, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts)
 {
 	prev_pts.clear();
 	pts.clear();
@@ -479,11 +481,12 @@ void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyP
 		return;
 
 	Mat mask = windowedMatchingMask(kpts, prev_kpts, 25, 25);
+	GpuMat gMask(mask);
 
-	BFMatcher desc_matcher(NORM_L2);
+	BFMatcher_GPU desc_matcher(NORM_L2);
 	std::vector<DMatch> matches;
 
-	desc_matcher.match(desc, prev_desc, matches, mask);
+	desc_matcher.match(desc, prev_desc, matches, gMask);
 	
 	prev_pts.reserve(matches.size());
 	pts.reserve(matches.size());
@@ -521,25 +524,33 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	return;
 }
 
-void MatchFromFlow(const Mat& prev_grey, const Mat& flow, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts, const Mat& mask)
+void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x, 
+	               const GpuMat& d_flow_y, std::vector<Point2f>& v_prev_pts, 
+	               std::vector<Point2f>& pts, const GpuMat& d_mask)
 {
-	int width = prev_grey.cols;
-	int height = prev_grey.rows;
-	prev_pts.clear();
-	pts.clear();
+	int width = d_prev_grey.cols;
+	int height = d_prev_grey.rows;
 
-	const int MAX_COUNT = 1000;
-	goodFeaturesToTrack(prev_grey, prev_pts, MAX_COUNT, 0.001, 3, mask);
+	// int maxCorners, double qualityLevel, double minDistance 
+	GoodFeaturesToTrackDetector_GPU good_to_track(1000, 0.001, 3);
+	// SET: prev_pts one row matrix with CV_32FC2 type
+	GpuMat d_prev_pts;
+	good_to_track(d_prev_grey, d_prev_pts, d_mask);
+	// goodFeaturesToTrack(prev_grey, prev_pts, MAX_COUNT, 0.001, 3, mask);
+	download(d_prev_pts, v_prev_pts);
 	
-	if(prev_pts.size() == 0)
+	if(v_prev_pts.size() == 0)
 		return;
+	
+	GpuMat xy[2];
+    gpu::split(prev_pts, xy);
 
-	for(int i = 0; i < prev_pts.size(); i++) {
-		int x = std::min<int>(std::max<int>(cvRound(prev_pts[i].x), 0), width-1);
-		int y = std::min<int>(std::max<int>(cvRound(prev_pts[i].y), 0), height-1);
+	for(int i = 0; i < v_prev_pts.size(); i++) {
+		int x = std::min<int>(std::max<int>(cvRound(v_prev_pts[i].x), 0), width-1);
+		int y = std::min<int>(std::max<int>(cvRound(v_prev_pts[i].y), 0), height-1);
 
-		const float* f = flow.ptr<float>(y);
-		pts.push_back(Point2f(x+f[2*x], y+f[2*x+1]));
+		// const float* f = flow.ptr<float>(y);
+		pts.push_back(Point2f(x+d_flow_x[y][x], y+d_flow_y[y][x]));
 	}
 }
 

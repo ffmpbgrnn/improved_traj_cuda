@@ -408,10 +408,10 @@ void MedianBlurFlow(Mat& flow, const int ksize)
 	merge(channels, 2, flow);
 }
 
-void FarnebackPolyExpPyr(const Mat& img, std::vector<Mat>& poly_exp_pyr,
+void FarnebackPolyExpPyr(const GpuMat& img, std::vector<GpuMat>& poly_exp_pyr,
 						 std::vector<float>& fscales, int poly_n, double poly_sigma)
 {
-    Mat fimg;
+    GpuMat fimg;
 
     for(int k = 0; k < poly_exp_pyr.size(); k++)
     {
@@ -422,13 +422,16 @@ void FarnebackPolyExpPyr(const Mat& img, std::vector<Mat>& poly_exp_pyr,
         int width = poly_exp_pyr[k].cols;
         int height = poly_exp_pyr[k].rows;
 
-        Mat R, I;
+        GpuMat R_x, R_y, I;
 
 		img.convertTo(fimg, CV_32F);
 		GaussianBlur(fimg, fimg, Size(smooth_sz, smooth_sz), sigma, sigma);
 	    resize(fimg, I, Size(width, height), CV_INTER_LINEAR);
 
-		FarnebackPolyExp(I, R, poly_n, poly_sigma);
+		// FarnebackPolyExp(I, R, poly_n, poly_sigma);
+        FarnebackOpticalFlow d_calc;
+        d_calc(d_frameL, d_frameR, d_flowx, d_flowy);
+
 		R.copyTo(poly_exp_pyr[k]);
 	}
 }
