@@ -5,7 +5,7 @@
 #include "Utils.h"
 
 using namespace cv;
-
+using namespace gpu;
 // get the rectangle for computing the descriptor
 void GetRect(const Point2f& point, RectInfo& rect, const int width, const int height, const DescInfo& descInfo)
 {
@@ -78,7 +78,6 @@ void GetDesc(const DescMat* descMat, RectInfo& rect, DescInfo descInfo, std::vec
 {
 	int dim = descInfo.dim;
 	int nBins = descInfo.nBins;
-	int height = descMat->height;
 	int width = descMat->width;
 
 	int xStride = rect.width/descInfo.nxCells;
@@ -202,7 +201,7 @@ bool IsCameraMotion(std::vector<Point2f>& disp)
 {
 	float disp_max = 0;
 	float disp_sum = 0;
-	for(int i = 0; i < disp.size(); ++i) {
+	for(unsigned int i = 0; i < disp.size(); ++i) {
 		float x = disp[i].x;
 		float y = disp[i].y;
 		float temp = sqrt(x*x + y*y);
@@ -216,30 +215,30 @@ bool IsCameraMotion(std::vector<Point2f>& disp)
 		return false;
 
 	float disp_norm = 1./disp_sum;
-	for (int i = 0; i < disp.size(); ++i)
+	for (unsigned int i = 0; i < disp.size(); ++i)
 		disp[i] *= disp_norm;
 
 	return true;
 }
 
 // detect new feature points in an image without overlapping to previous points
-void DenseSample(const Mat& grey, std::vector<Point2f>& points, const double quality, const int min_distance)
+void DenseSample(const GpuMat& d_grey, std::vector<Point2f>& points, const double quality, const int min_distance)
 {
-	int width = grey.cols/min_distance;
-	int height = grey.rows/min_distance;
+	int width = d_grey.cols/min_distance;
+	int height = d_grey.rows/min_distance;
 
-	Mat eig;
-	cornerMinEigenVal(grey, eig, 3, 3);
+	GpuMat d_eig;
+	gpu::cornerMinEigenVal(d_grey, d_eig, 3, 3);
 
 	double maxVal = 0;
-	minMaxLoc(eig, 0, &maxVal);
+	minMaxLoc(d_eig, 0, &maxVal);
 	const double threshold = maxVal*quality;
 
 	std::vector<int> counters(width*height);
 	int x_max = min_distance*width;
 	int y_max = min_distance*height;
 
-	for(int i = 0; i < points.size(); i++) {
+	for(unsigned int i = 0; i < points.size(); i++) {
 		Point2f point = points[i];
 		int x = cvFloor(point.x);
 		int y = cvFloor(point.y);
@@ -254,6 +253,8 @@ void DenseSample(const Mat& grey, std::vector<Point2f>& points, const double qua
 	points.clear();
 	int index = 0;
 	int offset = min_distance/2;
+	Mat eig;
+	d_eig.download(eig);
 	for(int i = 0; i < height; i++)
 	for(int j = 0; j < width; j++, index++) {
 		if(counters[index] > 0)
@@ -377,7 +378,7 @@ void InitMaskWithBox(Mat& mask, std::vector<BoundBox>& bbs)
 			m[j] = 1;
 	}
 
-	for(int k = 0; k < bbs.size(); k++) {
+	for(unsigned int k = 0; k < bbs.size(); k++) {
 		BoundBox& bb = bbs[k];
 		for(int i = cvCeil(bb.TopLeft.y); i <= cvFloor(bb.BottomRight.y); i++) {
 			uchar* m = mask.ptr<uchar>(i);
@@ -386,7 +387,7 @@ void InitMaskWithBox(Mat& mask, std::vector<BoundBox>& bbs)
 		}
 	}
 }
-
+/*
 static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int flags = INTER_LINEAR,
 	            			 int borderType = BORDER_CONSTANT, const Scalar& borderValue = Scalar())
 {
@@ -470,7 +471,7 @@ static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int fl
 		}
 	}
 }
-
+*/
 void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyPoint>& kpts,
 				  const GpuMat& prev_desc, const GpuMat& desc, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts)
 {
@@ -542,15 +543,15 @@ void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x,
 	if(v_prev_pts.size() == 0)
 		return;
 	
-	GpuMat xy[2];
-    gpu::split(prev_pts, xy);
+	// Mat flow_x, flow_y;
+ //    d_flow_x.download(flow_x);
 
-	for(int i = 0; i < v_prev_pts.size(); i++) {
+	for(unsigned int i = 0; i < v_prev_pts.size(); i++) {
 		int x = std::min<int>(std::max<int>(cvRound(v_prev_pts[i].x), 0), width-1);
 		int y = std::min<int>(std::max<int>(cvRound(v_prev_pts[i].y), 0), height-1);
 
 		// const float* f = flow.ptr<float>(y);
-		pts.push_back(Point2f(x+d_flow_x[y][x], y+d_flow_y[y][x]));
+		pts.push_back(Point2f(x+d_flow_x.ptr<float>(y)[x], y+d_flow_y.ptr<float>(y)[x]));
 	}
 }
 

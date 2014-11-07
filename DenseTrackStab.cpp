@@ -6,6 +6,7 @@
 #include <time.h>
 
 using namespace cv;
+using namespace cv::gpu;
 
 int show_track = 0; // set show_track = 1, if you want to visualize the trajectories
 
@@ -52,20 +53,26 @@ int main(int argc, char** argv)
 	GpuMat d_prev_kpts_surf, d_kpts_surf;
 	GpuMat prev_desc_surf, desc_surf;
 	Mat human_mask;
+	GpuMat d_human_mask;
 
-	GpuMat image, d_prev_grey, d_grey;
+	GpuMat d_image, d_prev_grey, d_grey;
 
 	std::vector<float> fscales(0);
 	std::vector<Size> sizes(0);
 
-	std::vector<GpuMat> d_prev_grey_pyr(0), d_grey_pyr(0), d_flow_pyr(0), d_flow_warp_pyr(0);
+	std::vector<GpuMat> d_prev_grey_pyr(0), d_grey_pyr(0), 
+	                    d_flow_pyr_x(0), d_flow_pyr_y(0), 
+	                    d_flow_warp_pyr_x(0), d_flow_warp_pyr_y(0);
 	std::vector<GpuMat> d_prev_poly_pyr(0), d_poly_pyr(0), d_poly_warp_pyr(0);
 
 	std::vector<std::list<Track> > xyScaleTracks;
 	int init_counter = 0; // indicate when to detect new feature points
+    
+    SURF_GPU surf;
+
 	while(true) {
 		Mat frame;
-		int i, j, c;
+		int i, c;
 
 		// get a new frame
 		capture >> frame;
@@ -80,7 +87,7 @@ int main(int argc, char** argv)
     	GpuMat d_frame(frame);
 
 		if(frame_num == start_frame) {
-			image.create(frame.size(), CV_8UC3);
+			d_image.create(frame.size(), CV_8UC3);
 			d_grey.create(frame.size(), CV_8UC1);
 			d_prev_grey.create(frame.size(), CV_8UC1);
 
@@ -88,8 +95,10 @@ int main(int argc, char** argv)
 
 			BuildPry(sizes, CV_8UC1, d_prev_grey_pyr);
 			BuildPry(sizes, CV_8UC1, d_grey_pyr);
-			BuildPry(sizes, CV_32FC2, d_flow_pyr);
-			BuildPry(sizes, CV_32FC2, d_flow_warp_pyr);
+			BuildPry(sizes, CV_32FC1, d_flow_pyr_x);
+			BuildPry(sizes, CV_32FC1, d_flow_pyr_y);
+			BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_x);
+			BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_y);
 
 			BuildPry(sizes, CV_32FC(5), d_prev_poly_pyr);
 			BuildPry(sizes, CV_32FC(5), d_poly_pyr);
@@ -97,8 +106,8 @@ int main(int argc, char** argv)
 
 			xyScaleTracks.resize(scale_num);
 
-			d_frame.copyTo(image);
-			cvtColor(image, d_prev_grey, CV_BGR2GRAY);
+			d_frame.copyTo(d_image);
+			cvtColor(d_image, d_prev_grey, CV_BGR2GRAY);
 
 			for(int iScale = 0; iScale < scale_num; iScale++) {
 				if(iScale == 0)
@@ -112,40 +121,40 @@ int main(int argc, char** argv)
 
 				// save the feature points
 				std::list<Track>& tracks = xyScaleTracks[iScale];
-				for(i = 0; i < points.size(); i++)
+				for(unsigned i = 0; i < points.size(); i++)
 					tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
 			}
 
 			// compute polynomial expansion
 			// my::FarnebackPolyExpPyr(prev_grey, d_prev_poly_pyr, fscales, 7, 1.5);
 
-			human_mask = GpuMat::ones(d_frame.size(), CV_8UC1);
+			human_mask = Mat::ones(d_frame.size(), CV_8UC1);
 			if(bb_file)
 				InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
-
+			d_human_mask.upload(human_mask);
 			/**
 			 * is d_prev_kpts_surf in GPU or CPU?
 			 * or use GpuMat?
 			 */
-    		surf(d_prev_grey, human_mask, d_prev_kpts_surf, prev_desc_surf);
+    		surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, prev_desc_surf);
 
 			frame_num++;
 			continue;
 		}
 
 		init_counter++;
-		d_frame.copyTo(image);
-		cvtColor(image, d_grey, CV_BGR2GRAY);
+		d_frame.copyTo(d_image);
+		cvtColor(d_image, d_grey, CV_BGR2GRAY);
 
 		if(bb_file)
 			InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
 
 
-    	surf(d_grey, human_mask, d_kpts_surf, desc_surf);
+    	surf(d_grey, d_human_mask, d_kpts_surf, desc_surf);
     	std::vector<KeyPoint> prev_kpts_surf, kpts_surf;
 
     	surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
-    	surf.downloadKeypoints(prev_kpts_surf, kpts_surf);
+    	surf.downloadKeypoints(d_kpts_surf, kpts_surf);
 
 		std::vector<Point2f> prev_pts_surf, pts_surf;
 		ComputeMatch(prev_kpts_surf, kpts_surf, prev_desc_surf, desc_surf, prev_pts_surf, pts_surf);
@@ -157,13 +166,13 @@ int main(int argc, char** argv)
     	d_optCalc.winSize   = 10;
     	d_optCalc.numIters  = 2;
     	// GpuMat d_flowx, d_flowy;
-    	for (int i = 0; i < d_prev_grey_pyr.size(); i++) {
+    	for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
     		d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i]);
     	}
 
     	// Do goodFeatureToTrack here
 		std::vector<Point2f> prev_pts_flow, pts_flow;
-		MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, human_mask);
+		MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask);
 
 		std::vector<Point2f> prev_pts_all, pts_all;
 
@@ -173,27 +182,27 @@ int main(int argc, char** argv)
 		if(pts_all.size() > 50) {
 			std::vector<unsigned char> match_mask;
 			Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
-			if(countNonZero(GpuMat(match_mask)) > 25)
+			if(countNonZero(Mat(match_mask)) > 25)
 				H = temp;
 		}
 
 		Mat H_inv = H.inv();
-		GpuMat d_H_inv(H_inv);
+		// GpuMat d_H_inv(H_inv);
 		GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
 		// MyWarpPerspective(prev_grey, grey, grey_warp, H_inv); // warp the second frame
-		gpu::warpPerspective(d_prev_grey, d_grey_warp, d_H_inv, d_prev_grey.size());
+		gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
 
 
 		// compute optical flow for all scales once
 		// my::FarnebackPolyExpPyr(grey_warp, d_poly_warp_pyr, fscales, 7, 1.5);
 		// my::calcOpticalFlowFarneback(d_prev_poly_pyr, d_poly_warp_pyr, d_flow_warp_pyr, 10, 2);
-    	for (int i = 0; i < d_prev_grey_pyr.size(); i++) {
+    	for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
     		d_optCalc(d_prev_grey_pyr[i], d_poly_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
     	}
 
 		for(int iScale = 0; iScale < scale_num; iScale++) {
 			if(iScale == 0)
-				d_grey.copyTo(greflowy_pyr[0]);
+				d_grey.copyTo(d_grey_pyr[0]);
 			else
 				resize(d_grey_pyr[iScale-1], d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
 
@@ -210,23 +219,26 @@ int main(int argc, char** argv)
 				int y = std::min<int>(std::max<int>(cvRound(prev_point.y), 0), height-1);
 
 				Point2f point;
-				point.x = prev_point.x + d_flow_pyr_x[iScale][y][x]; // .ptr<float>(y)[2*x];
-				point.y = prev_point.y + d_flow_pyr_y[iScale][y][x]; //.ptr<float>(y)[2*x+1];
+				point.x = prev_point.x + d_flow_pyr_x[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x];
+				point.y = prev_point.y + d_flow_pyr_y[iScale].ptr<float>(y)[x]; //.ptr<float>(y)[2*x+1];
  
 				if(point.x <= 0 || point.x >= width || point.y <= 0 || point.y >= height) {
 					iTrack = tracks.erase(iTrack);
 					continue;
 				}
 
-				iTrack->disp[index].x = d_flow_warp_pyr_x[iScale][y][x]; // .ptr<float>(y)[2*x];
-				iTrack->disp[index].y = d_flow_warp_pyr_y[iScale][y][x]; // .ptr<float>(y)[2*x+1];
+				iTrack->disp[index].x = d_flow_warp_pyr_x[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x];
+				iTrack->disp[index].y = d_flow_warp_pyr_y[iScale].ptr<float>(y)[x]; // .ptr<float>(y)[2*x+1];
 
 				
 				iTrack->addPoint(point);
 
 				// draw the trajectories at the first scale
-				if(show_track == 1 && iScale == 0)
+				if(show_track == 1 && iScale == 0) {
+					Mat image;
+					d_image.download(image);
 					DrawTrack(iTrack->point, iTrack->index, fscales[iScale], image);
+				}
 
 				// if the trajectory achieves the maximal length
 				if(iTrack->index >= trackInfo.length) {
@@ -271,7 +283,7 @@ int main(int argc, char** argv)
 
 			DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
 			// save the new feature points
-			for(i = 0; i < points.size(); i++)
+			for(unsigned i = 0; i < points.size(); i++)
 				tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
 		}
 
@@ -288,7 +300,7 @@ int main(int argc, char** argv)
 		frame_num++;
 
 		if( show_track == 1 ) {
-			imshow( "DenseTrackStab", image);
+			imshow( "DenseTrackStab", d_image);
 			c = cvWaitKey(3);
 			if((char)c == 27) break;
 		}
