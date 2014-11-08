@@ -2,11 +2,10 @@
 #include "Initialize.h"
 #include "Descriptors.h"
 #include "OpticalFlow.h"
-
+#include "CUDA_RANSAC_Homography.h"
 #include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
-
 using namespace cv;
 using namespace cv::gpu;
 
@@ -93,7 +92,7 @@ int main(int argc, char** argv)
 
     while(true) {
         Mat frame;
-	std::cout << frame_num << std::endl;
+        std::cout << frame_num << std::endl;
         // get a new frame
         capture >> frame;
         if(frame.empty())
@@ -164,8 +163,10 @@ int main(int argc, char** argv)
         d_frame.copyTo(d_image);
         cvtColor(d_image, d_grey, CV_BGR2GRAY);
 
-        if(bb_file)
+        if(bb_file) {
             InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
+            d_human_mask.upload(human_mask);
+        }
 
         std::cout << "surf..." << std::endl;
         // surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
@@ -207,7 +208,7 @@ int main(int argc, char** argv)
         std::vector<Point2f> prev_pts_flow, pts_flow;
         MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask);
 
-        std::vector<Point2f> prev_pts_all, pts_all;
+        std::vector<Point2Df> prev_pts_all, pts_all;
 
         std::cout << "Merge SURF and Optical flow..." << std::endl;
         MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all);
@@ -216,10 +217,21 @@ int main(int argc, char** argv)
         std::cout << "Find Homography..." << std::endl;
         Mat H = Mat::eye(3, 3, CV_64FC1);
         if(pts_all.size() > 50) {
-            std::vector<unsigned char> match_mask;
-            Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
-            if(countNonZero(Mat(match_mask)) > 25)
-                H = temp;
+            std::vector<char> match_mask;
+            // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+            const double CONFIDENCE = 0.99;
+            const double INLIER_RATIO = 0.18; // Assuming lots of noise in the data!
+            const double INLIER_THRESHOLD = 3.0; // pixel distance
+            int K = (int)(log(1.0 - CONFIDENCE) / log(1.0 - pow(INLIER_RATIO, 4.0)));
+
+            float best_H[9];
+            CUDA_RANSAC_Homography(prev_pts_all, pts_all, INLIER_THRESHOLD, K, best_H, &match_mask);
+            for (int c = 0; c < 3; c++) {
+                for (int r = 0; r < 3; r++)
+                    H.ptr<float>(c)[r] = best_H[r * 3 + c];
+            }
+            // if(countNonZero(Mat(match_mask)) > 25)
+            //     H = temp;
         }
 
         Mat H_inv = H.inv();
@@ -227,6 +239,7 @@ int main(int argc, char** argv)
         GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
         std::cout << "Warp..." << std::endl;
         gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
+
 
         for(int iScale = 0; iScale < scale_num; iScale++) {
             if(iScale == 0)
@@ -246,11 +259,11 @@ int main(int argc, char** argv)
             int width = d_grey_pyr[iScale].cols;
             int height = d_grey_pyr[iScale].rows;
 
-	    Mat flow_x(d_flow_pyr_x[iScale]), flow_y(d_flow_pyr_y[iScale]);
+            Mat flow_x(d_flow_pyr_x[iScale]), flow_y(d_flow_pyr_y[iScale]);
             Mat flow_warp_x(d_flow_warp_pyr_x[iScale]), flow_warp_y(d_flow_warp_pyr_y[iScale]);
 
             // track feature points in each scale separately
-	    std::cout << "Checking validation of traj" << std::endl;
+            std::cout << "Checking validation of traj" << std::endl;
             std::list<Track>& tracks = xyScaleTracks[iScale];
             std::cout << "Scale: " << iScale << " Track size: " <<  tracks.size() << std::endl;
             for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end();) {
@@ -303,10 +316,10 @@ int main(int argc, char** argv)
                         // printf("%f\t", std::min<float>(std::max<float>((frame_num - trackInfo.length/2.0 - start_frame)/float(seqInfo.length), 0), 0.999));
                     
                         // output the trajectory
-                        for (int i = 0; i < trackInfo.length; ++i)
-                            printf("%f\t%f\t", displacement[i].x, displacement[i].y);
+                        // for (int i = 0; i < trackInfo.length; ++i)
+                        //     printf("%f\t%f\t", displacement[i].x, displacement[i].y);
         
-                        printf("\n");
+                        // printf("\n");
                     }
 
                     iTrack = tracks.erase(iTrack);
@@ -323,7 +336,6 @@ int main(int argc, char** argv)
             std::vector<Point2f> points(0);
             for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++)
                 points.push_back(iTrack->point[iTrack->index]);
-	    
             
             std::cout << "DenseSampling new point..." << std::endl;
             DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
@@ -332,7 +344,7 @@ int main(int argc, char** argv)
                 tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
         }
 
-	init_counter = 0;
+        init_counter = 0;
         d_grey.copyTo(d_prev_grey);
 
         d_prev_kpts_surf = d_kpts_surf;

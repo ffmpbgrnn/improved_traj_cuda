@@ -504,7 +504,7 @@ void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyP
 
 void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f>& pts1,
 				const std::vector<Point2f>& prev_pts2, const std::vector<Point2f>& pts2,
-				std::vector<Point2f>& prev_pts_all, std::vector<Point2f>& pts_all)
+				std::vector<Point2Df>& prev_pts_all, std::vector<Point2Df>& pts_all)
 {
 	prev_pts_all.clear();
 	prev_pts_all.reserve(prev_pts1.size() + prev_pts2.size());
@@ -513,13 +513,25 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	pts_all.reserve(pts1.size() + pts2.size());
 
 	for(size_t i = 0; i < prev_pts1.size(); i++) {
-		prev_pts_all.push_back(prev_pts1[i]);
-		pts_all.push_back(pts1[i]);
+		Point2Df point;
+		point.x = prev_pts1[i].x;
+		point.y = prev_pts1[i].y;
+		prev_pts_all.push_back(point);
+		point.x = pts1[i].x;
+		point.y = pts1[i].y;
+		pts_all.push_back(point);
 	}
 
 	for(size_t i = 0; i < prev_pts2.size(); i++) {
-		prev_pts_all.push_back(prev_pts2[i]);
-		pts_all.push_back(pts2[i]);	
+		Point2Df point;
+		point.x = prev_pts2[i].x;
+		point.y = prev_pts2[i].y;
+		prev_pts_all.push_back(point);
+		point.x = pts2[i].x;
+		point.y = pts2[i].y;
+
+		prev_pts_all.push_back(point);
+		pts_all.push_back(point);
 	}
 
 	return;

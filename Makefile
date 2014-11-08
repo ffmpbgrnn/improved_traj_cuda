@@ -19,7 +19,7 @@ LIBS := \
 CXXFLAGS = -pipe -D __STDC_CONSTANT_MACROS -D STD=std -Wall $(CXXFLAGS_$(BUILD)) -I. -I/opt/include -I/usr/local/include
 CXXFLAGS_debug := -ggdb
 CXXFLAGS_release := -O3 -DNDEBUG -ggdb
-LDFLAGS = -L/opt/lib -L/usr/local/lib -lopencv_gpu -pipe -Wall $(LDFLAGS_$(BUILD))
+LDFLAGS = -L/opt/lib -L/usr/local/lib -L/opt/cuda/lib64 -L/usr/local/cuda-5.5/lib64 -lcuda -lcudart -lopencv_gpu -pipe -Wall $(LDFLAGS_$(BUILD))
 LDFLAGS_debug := -ggdb
 LDFLAGS_release := -O3 -ggdb
 

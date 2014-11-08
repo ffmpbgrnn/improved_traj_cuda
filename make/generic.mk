@@ -104,7 +104,7 @@ $(BINDIR)/%.so:
 $(BINDIR)/%:
 	@echo "=== linking: $@ ==="
 	@rm -f $@
-	$(CXX) $(LDFLAGS) -o $@ $(filter %.o, $^) $(LDLIBS)
+	$(CXX) $(LDFLAGS) -o $@ $(filter %.o, $^) CUDA_RANSAC_Homography.o $(LDLIBS)
 
 %: %.o
 %.h: ;
