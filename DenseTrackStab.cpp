@@ -225,6 +225,7 @@ int main(int argc, char** argv)
             int K = (int)(log(1.0 - CONFIDENCE) / log(1.0 - pow(INLIER_RATIO, 4.0)));
 
             float best_H[9];
+            std::cout << prev_pts_all.size() << " " << pts_all.size() << std::endl;
             CUDA_RANSAC_Homography(prev_pts_all, pts_all, INLIER_THRESHOLD, K, best_H, &match_mask);
             for (int c = 0; c < 3; c++) {
                 for (int r = 0; r < 3; r++)
@@ -253,7 +254,7 @@ int main(int argc, char** argv)
             d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
         }
         std::cout << "Finished Warp Optical flow..." << std::endl;
-
+/*
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
             int width = d_grey_pyr[iScale].cols;
@@ -263,9 +264,9 @@ int main(int argc, char** argv)
             Mat flow_warp_x(d_flow_warp_pyr_x[iScale]), flow_warp_y(d_flow_warp_pyr_y[iScale]);
 
             // track feature points in each scale separately
-            std::cout << "Checking validation of traj" << std::endl;
+            // std::cout << "Checking validation of traj" << std::endl;
             std::list<Track>& tracks = xyScaleTracks[iScale];
-            std::cout << "Scale: " << iScale << " Track size: " <<  tracks.size() << std::endl;
+            // std::cout << "Scale: " << iScale << " Track size: " <<  tracks.size() << std::endl;
             for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end();) {
                 int index = iTrack->index;
                 Point2f prev_point = iTrack->point[index];
@@ -278,9 +279,10 @@ int main(int argc, char** argv)
  
                 if(point.x <= 0 || point.x >= width || point.y <= 0 || point.y >= height) {
                     iTrack = tracks.erase(iTrack);
-                    std::cout << "point overflow" << std::endl;
+                    // std::cout << "point overflow" << std::endl;
                     continue;
                 }
+                    // std::cout << "Checking validation of traj" << std::endl;
                 
                 iTrack->disp[index].x = flow_warp_x.ptr<float>(y)[x];
                 iTrack->disp[index].y = flow_warp_y.ptr<float>(y)[x];
@@ -305,7 +307,6 @@ int main(int argc, char** argv)
                         displacement[i] = iTrack->disp[i]*fscales[iScale];
     
                     float mean_x(0), mean_y(0), var_x(0), var_y(0), length(0);
-                    std::cout << "Checking validation of traj" << std::endl;
                     if(IsValid(trajectory, mean_x, mean_y, var_x, var_y, length) && IsCameraMotion(displacement)) {
                         // output the trajectory
                         // printf("%d\t%f\t%f\t%f\t%f\t%f\t%f\t", frame_num, mean_x, mean_y, var_x, var_y, length, fscales[iScale]);
@@ -327,7 +328,6 @@ int main(int argc, char** argv)
                 }
                 ++iTrack;
             }
-            std::cout << "End of Traj tracking..." << std::endl;
 
             if(init_counter != trackInfo.gap)
                 continue;
@@ -337,13 +337,14 @@ int main(int argc, char** argv)
             for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++)
                 points.push_back(iTrack->point[iTrack->index]);
             
-            std::cout << "DenseSampling new point..." << std::endl;
+            // std::cout << "DenseSampling new point..." << std::endl;
             DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
             // save the new feature points
             for(unsigned i = 0; i < points.size(); i++)
                 tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
         }
-
+        std::cout << "End of Traj tracking..." << std::endl;
+*/
         init_counter = 0;
         d_grey.copyTo(d_prev_grey);
 

@@ -530,7 +530,6 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 		point.x = pts2[i].x;
 		point.y = pts2[i].y;
 
-		prev_pts_all.push_back(point);
 		pts_all.push_back(point);
 	}
 
