@@ -231,7 +231,7 @@ void DenseSample(const GpuMat& d_grey, std::vector<Point2f>& points, const doubl
 	gpu::cornerMinEigenVal(d_grey, d_eig, 3, 3);
 
 	double maxVal = 0;
-	minMaxLoc(d_eig, 0, &maxVal);
+	gpu::minMaxLoc(d_eig, 0, &maxVal);
 	const double threshold = maxVal*quality;
 
 	std::vector<int> counters(width*height);

@@ -31,6 +31,7 @@ int main(int argc, char** argv)
     long secs_used,micros_used;
 
     gettimeofday(&start, NULL);
+
     gpu::setDevice(1);
     VideoCapture capture;
     char* video = argv[1];
@@ -67,100 +68,86 @@ int main(int argc, char** argv)
     if(show_track == 1)
         namedWindow("DenseTrackStab", 0);
 
-
-    // std::vector<KeyPoint> d_prev_kpts_surf, kpts_surf;
-    GpuMat d_prev_kpts_surf;
-    GpuMat d_prev_desc_surf;
-    Mat human_mask;
-    GpuMat d_human_mask;
+    Mat frame;
+    capture >> frame;
 
     GpuMat d_image, d_prev_grey, d_grey;
 
+    d_image.create(frame.size(), CV_8UC3);
+    d_grey.create(frame.size(), CV_8UC1);
+    d_prev_grey.create(frame.size(), CV_8UC1);
+
     std::vector<float> fscales(0);
     std::vector<Size> sizes(0);
+    InitPry(frame, fscales, sizes);
 
     std::vector<GpuMat> d_prev_grey_pyr(0), d_grey_pyr(0), d_grey_warp_pyr(0);
     std::vector<GpuMat> d_flow_pyr_x(0), d_flow_pyr_y(0), 
                         d_flow_warp_pyr_x(0), d_flow_warp_pyr_y(0);
 
-    std::vector<std::list<Track> > xyScaleTracks;
-    int init_counter = 0; // indicate when to detect new feature points
+    BuildPry(sizes, CV_8UC1, d_prev_grey_pyr);
+    BuildPry(sizes, CV_8UC1, d_grey_pyr);
+    BuildPry(sizes, CV_32FC1, d_grey_warp_pyr);
+
+    BuildPry(sizes, CV_32FC1, d_flow_pyr_x);
+    BuildPry(sizes, CV_32FC1, d_flow_pyr_y);
+    BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_x);
+    BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_y);
     
+    std::vector<std::list<Track> > xyScaleTracks;
+    xyScaleTracks.resize(scale_num);
+
+
+    d_image.upload(frame);
+    cvtColor(d_image, d_prev_grey, CV_BGR2GRAY);
+
+    for(int iScale = 0; iScale < scale_num; iScale++) {
+        if(iScale == 0)
+            d_prev_grey.copyTo(d_prev_grey_pyr[0]);
+        else
+            resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
+
+        // dense sampling feature points
+        std::vector<Point2f> points(0);
+        DenseSample(d_prev_grey_pyr[iScale], points, quality, min_distance);
+
+        // save the feature points
+        std::list<Track>& tracks = xyScaleTracks[iScale];
+        for(unsigned i = 0; i < points.size(); i++)
+            tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
+    }
+
+    Mat human_mask = Mat::ones(d_image.size(), CV_8UC1);
+    GpuMat d_human_mask;
+    if(bb_file)
+        InitMaskWithBox(human_mask, bb_list[0].BBs);
+    d_human_mask.upload(human_mask);
+
+
     SURF_GPU surf;
     surf.nOctaves = 2;
-    int frame_num = 0;
+    GpuMat d_prev_kpts_surf, d_prev_desc_surf;
+    surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf);
 
+    int frame_num = 1;
+    int init_counter = 0; // indicate when to detect new feature points
     while(true) {
-        Mat frame;
         std::cout << frame_num << std::endl;
         // get a new frame
         capture >> frame;
         if(frame.empty())
             break;
 
-        if(frame_num < start_frame || frame_num > end_frame) {
+        if (frame_num < start_frame) {
             frame_num++;
             continue;
         }
-
-        GpuMat d_frame(frame);
-
-        if(frame_num == start_frame) {
-            d_image.create(frame.size(), CV_8UC3);
-            d_grey.create(frame.size(), CV_8UC1);
-            d_prev_grey.create(frame.size(), CV_8UC1);
-
-            InitPry(frame, fscales, sizes);
-
-            BuildPry(sizes, CV_8UC1, d_prev_grey_pyr);
-            BuildPry(sizes, CV_8UC1, d_grey_pyr);
-            BuildPry(sizes, CV_32FC1, d_grey_warp_pyr);
-
-            BuildPry(sizes, CV_32FC1, d_flow_pyr_x);
-            BuildPry(sizes, CV_32FC1, d_flow_pyr_y);
-            BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_x);
-            BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_y);
-            xyScaleTracks.resize(scale_num);
-
-            d_frame.copyTo(d_image);
-
-            cvtColor(d_image, d_prev_grey, CV_BGR2GRAY);
-
-            for(int iScale = 0; iScale < scale_num; iScale++) {
-                if(iScale == 0)
-                    d_prev_grey.copyTo(d_prev_grey_pyr[0]);
-                else
-                    resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
-
-                // dense sampling feature points
-                std::vector<Point2f> points(0);
-                DenseSample(d_prev_grey_pyr[iScale], points, quality, min_distance);
-
-                // save the feature points
-                std::list<Track>& tracks = xyScaleTracks[iScale];
-                for(unsigned i = 0; i < points.size(); i++)
-                    tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
-            }
-
-            human_mask = Mat::ones(d_frame.size(), CV_8UC1);
-            if(bb_file)
-                InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
-            d_human_mask.upload(human_mask);
-
-         /* std::cout << d_prev_grey.cols << " " << d_prev_grey.rows << std::endl;
-            const int layer_rows = d_prev_grey.rows >> (surf.nOctaves - 1);
-            const int layer_cols = d_prev_grey.cols >> (surf.nOctaves - 1);
-            const int min_margin = ((calcSize((surf.nOctaves - 1), 2) >> 1) >> (surf.nOctaves - 1)) + 1;
-            std::cout << layer_rows - 2 * min_margin << " " << layer_rows << " " << min_margin << std::endl;
-            std::cout << surf.nOctaves << std::endl;*/
-            surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf);
-            // surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf);
-            frame_num++;
-            continue;
-        }
+        if (frame_num > end_frame)
+            break;
 
         init_counter++;
-        d_frame.copyTo(d_image);
+
+        d_image.upload(frame);
         cvtColor(d_image, d_grey, CV_BGR2GRAY);
 
         if(bb_file) {
@@ -168,8 +155,10 @@ int main(int argc, char** argv)
             d_human_mask.upload(human_mask);
         }
 
-        std::cout << "surf..." << std::endl;
-        // surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
+        #ifdef DEBUG
+            std::cout << "surf..." << std::endl;
+        #endif
+
         GpuMat d_kpts_surf, d_desc_surf;
         surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
 
@@ -177,8 +166,10 @@ int main(int argc, char** argv)
         surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
         surf.downloadKeypoints(d_kpts_surf, kpts_surf);
 
+        #ifdef DEBUG
+            std::cout << "Matching Surf..." << std::endl;
+        #endif
 
-        std::cout << "Matching Surf..." << std::endl;
         std::vector<Point2f> prev_pts_surf, pts_surf;
         ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf);
 
@@ -196,25 +187,32 @@ int main(int argc, char** argv)
             else
                 resize(d_grey_pyr[iScale-1], d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
         }
+        #ifdef DEBUG
+            std::cout << "Optical flow->two frames..." << std::endl;
+        #endif
 
-        std::cout << "Optical flow->two frames..." << std::endl;
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
             d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i]);
         }
 
-
+        #ifdef DEBUG
+            std::cout << "find Good feature point Optical flow..." << std::endl;
+        #endif
         // Do goodFeatureToTrack here
-        std::cout << "find Good feature point Optical flow..." << std::endl;
         std::vector<Point2f> prev_pts_flow, pts_flow;
         MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask);
 
         std::vector<Point2Df> prev_pts_all, pts_all;
 
-        std::cout << "Merge SURF and Optical flow..." << std::endl;
+        #ifdef DEBUG
+            std::cout << "Merge SURF and Optical flow..." << std::endl;
+        #endif
         MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all);
 
+        #ifdef DEBUG
+            std::cout << "Find Homography..." << std::endl;
+        #endif
 
-        std::cout << "Find Homography..." << std::endl;
         Mat H = Mat::eye(3, 3, CV_64FC1);
         if(pts_all.size() > 50) {
             std::vector<char> match_mask;
@@ -238,9 +236,10 @@ int main(int argc, char** argv)
         Mat H_inv = H.inv();
         // GpuMat d_H_inv(H_inv);
         GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
-        std::cout << "Warp..." << std::endl;
+        #ifdef DEBUG
+            std::cout << "Warp..." << std::endl;
+        #endif
         gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
-
 
         for(int iScale = 0; iScale < scale_num; iScale++) {
             if(iScale == 0)
@@ -249,12 +248,17 @@ int main(int argc, char** argv)
                 resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR);
         }
 
-        std::cout << "Do Warp Optical flow..." << std::endl;
+        #ifdef DEBUG
+            std::cout << "Do Warp Optical flow..." << std::endl;
+        #endif
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
             d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
         }
-        std::cout << "Finished Warp Optical flow..." << std::endl;
-/*
+
+        #ifdef DEBUG
+            std::cout << "Finished Warp Optical flow..." << std::endl;
+        #endif
+
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
             int width = d_grey_pyr[iScale].cols;
@@ -343,8 +347,10 @@ int main(int argc, char** argv)
             for(unsigned i = 0; i < points.size(); i++)
                 tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
         }
-        std::cout << "End of Traj tracking..." << std::endl;
-*/
+        #ifdef DEBUG
+            std::cout << "End of Traj tracking..." << std::endl;
+        #endif
+
         init_counter = 0;
         d_grey.copyTo(d_prev_grey);
 
