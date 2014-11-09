@@ -24,6 +24,12 @@ int calcSize(int octave, int layer)
 
     return (HAAR_SIZE0 + HAAR_SIZE_INC * layer) << octave;
 }
+void swapMat(GpuMat& prev, GpuMat& cur)
+{
+    GpuMat tmp(prev);
+    prev = cur;
+    cur = tmp;
+}
 
 int main(int argc, char** argv)
 {
@@ -103,7 +109,6 @@ int main(int argc, char** argv)
             continue;
         }
 
-        GpuMat d_frame(frame);
 
         if(frame_num == start_frame) {
             d_image.create(frame.size(), CV_8UC3);
@@ -122,7 +127,8 @@ int main(int argc, char** argv)
             BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_y);
             xyScaleTracks.resize(scale_num);
 
-            d_frame.copyTo(d_image);
+            d_image.upload(frame);
+//            d_frame.copyTo(d_image);
 
             cvtColor(d_image, d_prev_grey, CV_BGR2GRAY);
 
@@ -142,7 +148,7 @@ int main(int argc, char** argv)
                     tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
             }
 
-            human_mask = Mat::ones(d_frame.size(), CV_8UC1);
+            human_mask = Mat::ones(d_image.size(), CV_8UC1);
             if(bb_file)
                 InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
             d_human_mask.upload(human_mask);
@@ -160,7 +166,8 @@ int main(int argc, char** argv)
         }
 
         init_counter++;
-        d_frame.copyTo(d_image);
+        // d_frame.copyTo(d_image);
+        d_image.upload(frame);
         cvtColor(d_image, d_grey, CV_BGR2GRAY);
 
         if(bb_file) {
@@ -216,7 +223,7 @@ int main(int argc, char** argv)
 
         std::cout << "Find Homography..." << std::endl;
         Mat H = Mat::eye(3, 3, CV_64FC1);
-        if(pts_all.size() > 50) {
+/*        if(pts_all.size() > 50) {
             std::vector<char> match_mask;
             // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
             const double CONFIDENCE = 0.99;
@@ -234,26 +241,28 @@ int main(int argc, char** argv)
             // if(countNonZero(Mat(match_mask)) > 25)
             //     H = temp;
         }
-
+*/
         Mat H_inv = H.inv();
         // GpuMat d_H_inv(H_inv);
         GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
         std::cout << "Warp..." << std::endl;
         gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
 
-
+/*
         for(int iScale = 0; iScale < scale_num; iScale++) {
             if(iScale == 0)
                 d_grey_warp.copyTo(d_grey_warp_pyr[0]);
             else
                 resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR);
         }
-
+*/
+/*
         std::cout << "Do Warp Optical flow..." << std::endl;
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
             d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
         }
         std::cout << "Finished Warp Optical flow..." << std::endl;
+*/
 /*
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
@@ -346,10 +355,14 @@ int main(int argc, char** argv)
         std::cout << "End of Traj tracking..." << std::endl;
 */
         init_counter = 0;
-        d_grey.copyTo(d_prev_grey);
+/*        d_grey.copyTo(d_prev_grey);
 
         d_prev_kpts_surf = d_kpts_surf;
         d_desc_surf.copyTo(d_prev_desc_surf);
+*/
+        swapMat(d_prev_grey, d_grey);
+        swapMat(d_prev_kpts_surf, d_kpts_surf);
+        swapMat(d_prev_desc_surf, d_desc_surf);
 
         frame_num++;
 
