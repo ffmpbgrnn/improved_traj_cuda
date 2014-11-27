@@ -10,29 +10,23 @@ using namespace cv;
 using namespace cv::gpu;
 
 int show_track = 0; // set show_track = 1, if you want to visualize the trajectories
-int calcSize(int octave, int layer)
+
+void swapMat(GpuMat& prev, GpuMat& cur)
 {
-    /* Wavelet size at first layer of first octave. */
-    const int HAAR_SIZE0 = 9;
-
-    /* Wavelet size increment between layers. This should be an even number,
-     such that the wavelet sizes in an octave are either all even or all odd.
-     This ensures that when looking for the neighbours of a sample, the layers
-
-     above and below are aligned correctly. */
-    const int HAAR_SIZE_INC = 6;
-
-    return (HAAR_SIZE0 + HAAR_SIZE_INC * layer) << octave;
+    GpuMat tmp(prev);
+    prev = cur;
+    cur = tmp;
 }
 
 int main(int argc, char** argv)
 {
     struct timeval start, end;
-    long secs_used,micros_used;
+    long secs_used, micros_used;
 
     gettimeofday(&start, NULL);
 
     gpu::setDevice(1);
+
     VideoCapture capture;
     char* video = argv[1];
     int flag = arg_parse(argc, argv);
@@ -93,7 +87,16 @@ int main(int argc, char** argv)
     BuildPry(sizes, CV_32FC1, d_flow_pyr_y);
     BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_x);
     BuildPry(sizes, CV_32FC1, d_flow_warp_pyr_y);
-    
+
+    GpuMat trajMatrix[trackInfo.length];
+
+    GpuMat trajLengthCounter(sizes[0], CV_32FC1);
+    trajLengthCounter.setTo(Scalar::all(0));
+
+    for (int i = 0; i < trackInfo.length; i++) {
+        trajMatrix[i].create(sizes[i], CV_32FC2);
+    }
+
     std::vector<std::list<Track> > xyScaleTracks;
     xyScaleTracks.resize(scale_num);
 
@@ -105,7 +108,7 @@ int main(int argc, char** argv)
         if(iScale == 0)
             d_prev_grey.copyTo(d_prev_grey_pyr[0]);
         else
-            resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
+            gpu::resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
 
         // dense sampling feature points
         std::vector<Point2f> points(0);
@@ -131,6 +134,7 @@ int main(int argc, char** argv)
 
     int frame_num = 1;
     int init_counter = 0; // indicate when to detect new feature points
+    
     while(true) {
         std::cout << frame_num << std::endl;
         // get a new frame
@@ -180,6 +184,7 @@ int main(int argc, char** argv)
         d_optCalc.polySigma = 1.5; 
         d_optCalc.winSize   = 10;
         d_optCalc.numIters  = 2;
+        d_optCalc.fastPyramids = true;
         // GpuMat d_flowx, d_flowy;
         for(int iScale = 0; iScale < scale_num; iScale++) {
             if(iScale == 0)
@@ -217,6 +222,8 @@ int main(int argc, char** argv)
         if(pts_all.size() > 50) {
             std::vector<char> match_mask;
             // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+            // if(countNonZero(Mat(match_mask)) > 25)
+            //     H = temp;
             const double CONFIDENCE = 0.99;
             const double INLIER_RATIO = 0.18; // Assuming lots of noise in the data!
             const double INLIER_THRESHOLD = 3.0; // pixel distance
@@ -229,8 +236,6 @@ int main(int argc, char** argv)
                 for (int r = 0; r < 3; r++)
                     H.ptr<float>(c)[r] = best_H[r * 3 + c];
             }
-            // if(countNonZero(Mat(match_mask)) > 25)
-            //     H = temp;
         }
 
         Mat H_inv = H.inv();
@@ -352,10 +357,14 @@ int main(int argc, char** argv)
         #endif
 
         init_counter = 0;
-        d_grey.copyTo(d_prev_grey);
+        swapMat(d_prev_grey, d_grey);
+        // d_grey.copyTo(d_prev_grey);
 
-        d_prev_kpts_surf = d_kpts_surf;
-        d_desc_surf.copyTo(d_prev_desc_surf);
+        // d_prev_kpts_surf = d_kpts_surf;
+        swapMat(d_prev_kpts_surf, d_kpts_surf);
+
+        // d_desc_surf.copyTo(d_prev_desc_surf);
+        swapMat(d_prev_desc_surf, d_desc_surf);
 
         frame_num++;
 
