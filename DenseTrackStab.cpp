@@ -267,6 +267,7 @@ void *worker(void *args)
         TimeComputeMatch += (endTime - startTime);
 
         // 65us
+        /*        
         startTime = cv::getTickCount();
             for(int iScale = 0; iScale < scale_num; iScale++) {
                 if(iScale == 0)
@@ -277,20 +278,29 @@ void *worker(void *args)
             }
         endTime = cv::getTickCount();
         TimeResize_Step_1 += (endTime - startTime);
-
+        */
 
         // 10000us
         startTime = cv::getTickCount();
-        for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
-            FarnebackOpticalFlow d_optCalc;
+        /*for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
+            traj::gpu::FarnebackOpticalFlow d_optCalc;
             d_optCalc.polyN     = 7;
             d_optCalc.polySigma = 1.5;
             d_optCalc.winSize   = 10;
             d_optCalc.numIters  = 2;
-            d_optCalc.numLevels = 1;
+            d_optCalc.numLevels = scale_num;
             d_optCalc.fastPyramids = true;
             d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], streams);
-        }
+        }*/
+        traj::gpu::FarnebackOpticalFlow d_optCalc;
+        d_optCalc.polyN     = 7;
+        d_optCalc.polySigma = 1.5;
+        d_optCalc.winSize   = 10;
+        d_optCalc.numIters  = 2;
+        d_optCalc.numLevels = scale_num;
+        d_optCalc.fastPyramids = true;
+        d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], streams);
+
         endTime = cv::getTickCount();
         TimeOpticalFlow_Step_1 += (endTime - startTime);
 
@@ -306,7 +316,7 @@ void *worker(void *args)
         endTime = cv::getTickCount();
         TimeMergeFlow += (endTime - startTime);
 
-	std::cout << pts_surf.size() << " " << pts_flow.size() << " " << pts_all.size() << std::endl;
+    	std::cout << pts_surf.size() << " " << pts_flow.size() << " " << pts_all.size() << std::endl;
         startTime = cv::getTickCount();
             Mat H = Mat::eye(3, 3, CV_64FC1);
             /*if(pts_all.size() > 50) {
@@ -502,6 +512,9 @@ int main(int argc_m, char **argv_m)
     int id[15];
     setDevice(1);
     Stream streams[STREAM_NUM];
+
+    traj::gpu::FarnebackOpticalFlow d_optCalc;
+    d_optCalc.setConstant();
 
     for (int i = 0; i < STREAM_NUM; i++)
         id[i] = i;
