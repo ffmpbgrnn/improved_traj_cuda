@@ -43,7 +43,7 @@ void *multiResize(void *ptr)
 {
     setDevice(1);
     multiResize_tdata *tdata_ptr = (multiResize_tdata *)ptr;
-    
+
     int iScale = tdata_ptr->iScale;
     GpuMat& d_grey = *(tdata_ptr->d_grey);
     GpuMat& d_grey_pyr = *(tdata_ptr->d_grey_pyr);
@@ -78,7 +78,7 @@ void *worker(void *args)
 {
     struct timeval start, end;
     long secs_used,micros_used;
-    
+
     Stream& streams = *(Stream *)args;
     gettimeofday(&start, NULL);
     setDevice(1);
@@ -130,12 +130,12 @@ void *worker(void *args)
     std::vector<Size> sizes(0);
 
     std::vector<GpuMat> d_prev_grey_pyr(0), d_grey_pyr(0), d_grey_warp_pyr(0);
-    std::vector<GpuMat> d_flow_pyr_x(0), d_flow_pyr_y(0), 
+    std::vector<GpuMat> d_flow_pyr_x(0), d_flow_pyr_y(0),
                         d_flow_warp_pyr_x(0), d_flow_warp_pyr_y(0);
 
     std::vector<std::list<Track> > xyScaleTracks;
     int init_counter = 0; // indicate when to detect new feature points
-    
+
     SURF_GPU surf;
     surf.nOctaves = 2;
     int frame_num = 0;
@@ -163,22 +163,14 @@ void *worker(void *args)
     int64 TimeReadFrame = 0;
     int64 TimeEachRound = 0;
 
-    FarnebackOpticalFlow d_optCalc;
-    d_optCalc.polyN     = 7;
-    d_optCalc.polySigma = 1.5; 
-    d_optCalc.winSize   = 10;
-    d_optCalc.numIters  = 2;
-    d_optCalc.numLevels = 1;
-//    d_optCalc.fastPyramids = true;
-
     BroxOpticalFlow d_flow(0.197, 50, 0.5, 10, 77, 10);
     while(true) {
         int64 eachRoundStartTime = cv::getTickCount();
         Mat frame;
         std::cout << frame_num << std::endl;
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
 		capture >> frame;
-	endTime = cv::getTickCount();
+        endTime = cv::getTickCount();
 
 
 
@@ -242,7 +234,7 @@ void *worker(void *args)
         init_counter++;
         timeCount++;
 
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             d_image.upload(frame);
             cvtColor(d_image, d_grey, CV_BGR2GRAY);
         endTime = cv::getTickCount();
@@ -252,35 +244,35 @@ void *worker(void *args)
             InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
             d_human_mask.upload(human_mask);
         }
-        
+
         GpuMat d_kpts_surf, d_desc_surf;
 
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
             printf("key:%d\n", d_kpts_surf.cols);
         endTime = cv::getTickCount();
         TimeSurf_Step_1 += (endTime - startTime);
 
         std::vector<KeyPoint> prev_kpts_surf, kpts_surf;
-       
-        startTime = cv::getTickCount(); 
+
+        startTime = cv::getTickCount();
             surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
             surf.downloadKeypoints(d_kpts_surf, kpts_surf); // all 100us
         endTime = cv::getTickCount();
         TimeSurfDownloadKeyPoint += (endTime - startTime);
 
-        
+
 
         // std::cout << prev_kpts_surf.size() << " " << kpts_surf.size() << std::endl;
 
         std::vector<Point2f> prev_pts_surf, pts_surf;
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf, streams); // 7500us
         endTime = cv::getTickCount();
         TimeComputeMatch += (endTime - startTime);
-        
+
         // 65us
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             for(int iScale = 0; iScale < scale_num; iScale++) {
                 if(iScale == 0)
                     d_grey.copyTo(d_grey_pyr[0]);
@@ -290,30 +282,37 @@ void *worker(void *args)
             }
         endTime = cv::getTickCount();
         TimeResize_Step_1 += (endTime - startTime);
-    
+
 
         // 10000us
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
+            FarnebackOpticalFlow d_optCalc;
+            d_optCalc.polyN     = 7;
+            d_optCalc.polySigma = 1.5;
+            d_optCalc.winSize   = 10;
+            d_optCalc.numIters  = 2;
+            d_optCalc.numLevels = 1;
+            d_optCalc.fastPyramids = true;
             d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], streams);
         }
         endTime = cv::getTickCount();
         TimeOpticalFlow_Step_1 += (endTime - startTime);
-       
+
         std::vector<Point2f> prev_pts_flow, pts_flow;
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask, streams);
         endTime = cv::getTickCount();
         TimeMatchFlow += (endTime - startTime);
 
         std::vector<Point2f> prev_pts_all, pts_all;
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all, streams);
         endTime = cv::getTickCount();
         TimeMergeFlow += (endTime - startTime);
-	
+
 	std::cout << pts_surf.size() << " " << pts_flow.size() << " " << pts_all.size() << std::endl;
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             Mat H = Mat::eye(3, 3, CV_64FC1);
             /*if(pts_all.size() > 50) {
                 std::vector<char> match_mask;
@@ -347,13 +346,13 @@ void *worker(void *args)
         endTime = cv::getTickCount();
         TimeFindHomography += (endTime - startTime);
 
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
             gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size(), streams);
         endTime = cv::getTickCount();
         TimeWarpPerspective += (endTime - startTime);
 
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             for(int iScale = 0; iScale < scale_num; iScale++) {
                 if(iScale == 0)
                     d_grey_warp.copyTo(d_grey_warp_pyr[0]);
@@ -365,15 +364,22 @@ void *worker(void *args)
         TimeResize_Step_2 += (endTime - startTime);
 
         /// TimeOpticalFlow_Step_2
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
             for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
+                FarnebackOpticalFlow d_optCalc;
+                d_optCalc.polyN     = 7;
+                d_optCalc.polySigma = 1.5;
+                d_optCalc.winSize   = 10;
+                d_optCalc.numIters  = 2;
+                d_optCalc.numLevels = 1;
+                d_optCalc.fastPyramids = true;
                 d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i], streams); // , work_stream[i]);
             }
         endTime = cv::getTickCount();
         TimeOpticalFlow_Step_2 += (endTime - startTime);
 
 
-        startTime = cv::getTickCount(); 
+        startTime = cv::getTickCount();
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
             int width = d_grey_pyr[iScale].cols;
@@ -395,14 +401,14 @@ void *worker(void *args)
                 Point2f point;
                 point.x = prev_point.x + flow_x.ptr<float>(y)[x];
                 point.y = prev_point.y + flow_y.ptr<float>(y)[x];
- 
+
                 if(point.x <= 0 || point.x >= width || point.y <= 0 || point.y >= height) {
                     iTrack = tracks.erase(iTrack);
                     // std::cout << "point overflow" << std::endl;
                     continue;
                 }
                     // std::cout << "Checking validation of traj" << std::endl;
-                
+
                 iTrack->disp[index].x = flow_warp_x.ptr<float>(y)[x];
                 iTrack->disp[index].y = flow_warp_y.ptr<float>(y)[x];
 
@@ -420,14 +426,14 @@ void *worker(void *args)
                     std::vector<Point2f> trajectory(trackInfo.length+1);
                     for(int i = 0; i <= trackInfo.length; ++i)
                         trajectory[i] = iTrack->point[i]*fscales[iScale];
-                
+
                     std::vector<Point2f> displacement(trackInfo.length);
                     for (int i = 0; i < trackInfo.length; ++i)
                         displacement[i] = iTrack->disp[i]*fscales[iScale];
-    
+
                     float mean_x(0), mean_y(0), var_x(0), var_y(0), length(0);
                     if(IsValid(trajectory, mean_x, mean_y, var_x, var_y, length) && IsCameraMotion(displacement)) {
-                      
+
                     }
 
                     iTrack = tracks.erase(iTrack);
@@ -443,8 +449,8 @@ void *worker(void *args)
             std::vector<Point2f> points(0);
             for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++)
                 points.push_back(iTrack->point[iTrack->index]);
-            
-            int64 s = cv::getTickCount(); 
+
+            int64 s = cv::getTickCount();
                 DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
             int64 e = cv::getTickCount();
             TimeDenseSample += (e - s);
@@ -496,18 +502,17 @@ int main(int argc_m, char **argv_m)
 {
     argc = argc_m;
     argv = argv_m;
-    pthread_t thread_list[15];
+    const int STREAM_NUM = 15;
+    pthread_t thread_list[STREAM_NUM];
     int id[15];
     setDevice(1);
-    Stream streams[15];
+    Stream streams[STREAM_NUM];
 
-    for (int i = 0; i < 15; i++)
+    for (int i = 0; i < STREAM_NUM; i++)
         id[i] = i;
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 2; i++)
         pthread_create(&thread_list[i], NULL, worker, &streams[i]);
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 2; i++)
         pthread_join(thread_list[i], NULL);
 
 }
-
-
