@@ -72,12 +72,14 @@ void* multiDoOptCalc(void *ptr)
     d_optCalc(*tdata_ptr->d_prev_grey, *tdata_ptr->d_grey, *tdata_ptr->d_flow_x, *tdata_ptr->d_flow_y);
     return (void *)0;
 }
-
-int main(int argc, char** argv)
+int argc;
+char **argv;
+void *worker(void *args)
 {
     struct timeval start, end;
     long secs_used,micros_used;
-
+    
+    Stream& streams = *(Stream *)args;
     gettimeofday(&start, NULL);
     setDevice(1);
     VideoCapture capture;
@@ -87,7 +89,7 @@ int main(int argc, char** argv)
 
     if(!capture.isOpened()) {
         fprintf(stderr, "Could not initialize capturing..\n");
-        return -1;
+        return NULL;
     }
 
     TrackInfo trackInfo;
@@ -144,11 +146,41 @@ int main(int argc, char** argv)
 
     int64 timeSum = 0;
     int64 timeCount = 0;
+    int64 TimeUpload = 0;
+    int64 TimeSurf_Step_1 = 0;
+    int64 TimeSurfDownloadKeyPoint = 0;
+    int64 TimeComputeMatch = 0;
+    int64 TimeResize_Step_1 = 0;
+    int64 TimeOpticalFlow_Step_1 = 0;
+    int64 TimeMatchFlow = 0;
+    int64 TimeMergeFlow = 0;
+    int64 TimeFindHomography = 0;
+    int64 TimeWarpPerspective = 0;
+    int64 TimeResize_Step_2 = 0;
+    int64 TimeOpticalFlow_Step_2 = 0;
+    int64 TimeDenseSample = 0;
+    int64 TimeCheckTraj = 0;
+    int64 TimeReadFrame = 0;
+    int64 TimeEachRound = 0;
+
+    FarnebackOpticalFlow d_optCalc;
+    d_optCalc.polyN     = 7;
+    d_optCalc.polySigma = 1.5; 
+    d_optCalc.winSize   = 10;
+    d_optCalc.numIters  = 2;
+    d_optCalc.numLevels = 1;
+//    d_optCalc.fastPyramids = true;
+
+    BroxOpticalFlow d_flow(0.197, 50, 0.5, 10, 77, 10);
     while(true) {
+        int64 eachRoundStartTime = cv::getTickCount();
         Mat frame;
         std::cout << frame_num << std::endl;
-        // get a new frame
-        capture >> frame;
+        startTime = cv::getTickCount(); 
+		capture >> frame;
+	endTime = cv::getTickCount();
+
+
 
         if(frame.empty())
             break;
@@ -179,13 +211,12 @@ int main(int argc, char** argv)
             d_image.upload(frame);
 //            d_frame.copyTo(d_image);
 
-            cvtColor(d_image, d_prev_grey, CV_BGR2GRAY);
-
+            cvtColor(d_image, d_prev_grey, CV_BGR2GRAY, streams);
             for(int iScale = 0; iScale < scale_num; iScale++) {
                 if(iScale == 0)
                     d_prev_grey.copyTo(d_prev_grey_pyr[0]);
                 else
-                    resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
+                    resize(d_prev_grey_pyr[iScale-1], d_prev_grey_pyr[iScale], d_prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR, streams);
 
                 // dense sampling feature points
                 std::vector<Point2f> points(0);
@@ -202,183 +233,147 @@ int main(int argc, char** argv)
                 InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
             d_human_mask.upload(human_mask);
 
-         /* std::cout << d_prev_grey.cols << " " << d_prev_grey.rows << std::endl;
-            const int layer_rows = d_prev_grey.rows >> (surf.nOctaves - 1);
-            const int layer_cols = d_prev_grey.cols >> (surf.nOctaves - 1);
-            const int min_margin = ((calcSize((surf.nOctaves - 1), 2) >> 1) >> (surf.nOctaves - 1)) + 1;
-            std::cout << layer_rows - 2 * min_margin << " " << layer_rows << " " << min_margin << std::endl;
-            std::cout << surf.nOctaves << std::endl;*/
-            surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf);
-            // surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf);
+            surf(d_prev_grey, d_human_mask, d_prev_kpts_surf, d_prev_desc_surf, streams);
             frame_num++;
             continue;
         }
+        TimeReadFrame += (endTime - startTime);
 
         init_counter++;
-        // d_frame.copyTo(d_image);
-        d_image.upload(frame);
-        cvtColor(d_image, d_grey, CV_BGR2GRAY);
+        timeCount++;
+
+        startTime = cv::getTickCount(); 
+            d_image.upload(frame);
+            cvtColor(d_image, d_grey, CV_BGR2GRAY);
+        endTime = cv::getTickCount();
+        TimeUpload += (endTime - startTime);
 
         if(bb_file) {
             InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
             d_human_mask.upload(human_mask);
         }
         
-                // std::cout << "surf..." << std::endl;
-        // surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
         GpuMat d_kpts_surf, d_desc_surf;
-        surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
+
+        startTime = cv::getTickCount(); 
+            surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
+            printf("key:%d\n", d_kpts_surf.cols);
+        endTime = cv::getTickCount();
+        TimeSurf_Step_1 += (endTime - startTime);
 
         std::vector<KeyPoint> prev_kpts_surf, kpts_surf;
        
-       
-        surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
-        surf.downloadKeypoints(d_kpts_surf, kpts_surf); // all 100us
+        startTime = cv::getTickCount(); 
+            surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
+            surf.downloadKeypoints(d_kpts_surf, kpts_surf); // all 100us
+        endTime = cv::getTickCount();
+        TimeSurfDownloadKeyPoint += (endTime - startTime);
 
         
 
         // std::cout << prev_kpts_surf.size() << " " << kpts_surf.size() << std::endl;
 
-        // std::cout << "Matching Surf..." << std::endl;
         std::vector<Point2f> prev_pts_surf, pts_surf;
-        ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf); // 7500us
-                // std::cout << (endTime - startTime)/frequency*micro << ",\t" << std::endl;
-                // compute optical flow for all scales once
-        FarnebackOpticalFlow d_optCalc;
-        d_optCalc.polyN     = 7;
-        d_optCalc.polySigma = 1.5; 
-        d_optCalc.winSize   = 10;
-        d_optCalc.numIters  = 2;
-        d_optCalc.numLevels = 1;
-        d_optCalc.fastPyramids = true;
-
-        BroxOpticalFlow d_flow(0.197, 50, 0.5, 10, 77, 10);
-        // GpuMat d_flowx, d_flowy;
-        pthread_t thread[scale_num];
+        startTime = cv::getTickCount(); 
+            ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf, streams); // 7500us
+        endTime = cv::getTickCount();
+        TimeComputeMatch += (endTime - startTime);
+        
         // 65us
-        for(int iScale = 0; iScale < scale_num; iScale++) {
-            multiResize_tdata tdata;
-            tdata.iScale = iScale;
-            tdata.d_grey = &d_grey;
-            tdata.d_grey_pyr = &d_grey_pyr[iScale];
-            if(iScale == 0)
-                d_grey.copyTo(d_grey_pyr[0]);
-            else {
-                resize(d_grey_pyr[iScale-1], d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
-                // resize(d_grey, d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR, work_stream[iScale]);
+        startTime = cv::getTickCount(); 
+            for(int iScale = 0; iScale < scale_num; iScale++) {
+                if(iScale == 0)
+                    d_grey.copyTo(d_grey_pyr[0]);
+                else {
+                    resize(d_grey_pyr[iScale-1], d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR, streams);
+                }
             }
-            
-            // pthread_create(&thread[iScale], NULL, multiResize, (void *)&tdata);
-        }
-                // cudaDeviceSynchronize();
-        for (int i = 0; i < scale_num; i++) {
-            // pthread_join(thread[i], NULL);
-        }
+        endTime = cv::getTickCount();
+        TimeResize_Step_1 += (endTime - startTime);
+    
 
-        // std::cout << "Optical flow->two frames..." << std::endl;
         // 10000us
-	startTime = cv::getTickCount(); 
-
+        startTime = cv::getTickCount(); 
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
-            multiDoOptCalc_tdata tdata;
-            tdata.d_prev_grey = &d_prev_grey_pyr[i];
-            tdata.d_grey = &d_grey_pyr[i];
-            tdata.d_flow_x = &d_flow_pyr_x[i];
-            tdata.d_flow_y = &d_flow_pyr_y[i];
-            tdata.d_optCalc = &d_optCalc;
-            d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], work_stream[i]);
-            // d_flow(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i]);
-
-            // pthread_create(&thread[i], NULL, multiDoOptCalc, (void *)&tdata);
+            d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], streams);
         }
         endTime = cv::getTickCount();
-        timeSum += (endTime - startTime);
-        timeCount++;
+        TimeOpticalFlow_Step_1 += (endTime - startTime);
        
-
-        for (int i = 0; i < scale_num; i++) {
-            // pthread_join(thread[i], NULL);
-        }
-
-        // Do goodFeatureToTrack here
-        // std::cout << "find Good feature point Optical flow..." << std::endl;
         std::vector<Point2f> prev_pts_flow, pts_flow;
-        MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask);
+        startTime = cv::getTickCount(); 
+            MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask, streams);
+        endTime = cv::getTickCount();
+        TimeMatchFlow += (endTime - startTime);
 
-        std::vector<Point2Df> prev_pts_all, pts_all;
+        std::vector<Point2f> prev_pts_all, pts_all;
+        startTime = cv::getTickCount(); 
+            MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all, streams);
+        endTime = cv::getTickCount();
+        TimeMergeFlow += (endTime - startTime);
+	
+	std::cout << pts_surf.size() << " " << pts_flow.size() << " " << pts_all.size() << std::endl;
+        startTime = cv::getTickCount(); 
+            Mat H = Mat::eye(3, 3, CV_64FC1);
+            /*if(pts_all.size() > 50) {
+                std::vector<char> match_mask;
+                // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+                const double CONFIDENCE = 0.99;
+                const double INLIER_RATIO = 0.18; // Assuming lots of noise in the data!
+                const double INLIER_THRESHOLD = 3.0; // pixel distance
+                int K = (int)(log(1.0 - CONFIDENCE) / log(1.0 - pow(INLIER_RATIO, 4.0)));
 
-        // std::cout << "Merge SURF and Optical flow..." << std::endl;
-        MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all);
+                float best_H[9];
+                std::cout << prev_pts_all.size() << " " << pts_all.size() << std::endl;
+                CUDA_RANSAC_Homography(prev_pts_all, pts_all, INLIER_THRESHOLD, K, best_H, &match_mask);
+                for (int c = 0; c < 3; c++) {
+                    for (int r = 0; r < 3; r++)
+                        H.ptr<float>(c)[r] = best_H[r * 3 + c];
+                }
+                if(countNonZero(Mat(match_mask)) > 25)
+                    H = temp;
+            }*/
+	    if(pts_all.size() > 50) {
+		std::vector<unsigned char> match_mask;
+		Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+		if(countNonZero(Mat(match_mask)) > 25)
+			H = temp;
+                else
+			printf("Find Failed\n");
+	    }
+	    printf("size: %d\n", pts_all.size());
 
+            Mat H_inv = H.inv();
+        endTime = cv::getTickCount();
+        TimeFindHomography += (endTime - startTime);
 
-        // std::cout << "Find Homography..." << std::endl;
-        Mat H = Mat::eye(3, 3, CV_64FC1);
-        if(pts_all.size() > 50) {
-            std::vector<char> match_mask;
-            // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
-            const double CONFIDENCE = 0.99;
-            const double INLIER_RATIO = 0.18; // Assuming lots of noise in the data!
-            const double INLIER_THRESHOLD = 3.0; // pixel distance
-            int K = (int)(log(1.0 - CONFIDENCE) / log(1.0 - pow(INLIER_RATIO, 4.0)));
+        startTime = cv::getTickCount(); 
+            GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
+            gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size(), streams);
+        endTime = cv::getTickCount();
+        TimeWarpPerspective += (endTime - startTime);
 
-            float best_H[9];
-            std::cout << prev_pts_all.size() << " " << pts_all.size() << std::endl;
-            CUDA_RANSAC_Homography(prev_pts_all, pts_all, INLIER_THRESHOLD, K, best_H, &match_mask);
-            for (int c = 0; c < 3; c++) {
-                for (int r = 0; r < 3; r++)
-                    H.ptr<float>(c)[r] = best_H[r * 3 + c];
+        startTime = cv::getTickCount(); 
+            for(int iScale = 0; iScale < scale_num; iScale++) {
+                if(iScale == 0)
+                    d_grey_warp.copyTo(d_grey_warp_pyr[0]);
+                else {
+                    resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR, streams);
+                }
             }
-            // if(countNonZero(Mat(match_mask)) > 25)
-            //     H = temp;
-        }
+        endTime = cv::getTickCount();
+        TimeResize_Step_2 += (endTime - startTime);
 
-        Mat H_inv = H.inv();
-        // GpuMat d_H_inv(H_inv);
-        GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
-        // std::cout << "Warp..." << std::endl;
-        gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
-
-
-        for(int iScale = 0; iScale < scale_num; iScale++) {
-            multiResize_tdata tdata;
-            tdata.iScale = iScale;
-            tdata.d_grey = &d_grey_warp;
-            tdata.d_grey_pyr = &d_grey_warp_pyr[iScale];
-            if(iScale == 0)
-                d_grey_warp.copyTo(d_grey_warp_pyr[0]);
-            else {
-                resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR);
-                // resize(d_grey_warp, d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR, work_stream[iScale]);
+        /// TimeOpticalFlow_Step_2
+        startTime = cv::getTickCount(); 
+            for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
+                d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i], streams); // , work_stream[i]);
             }
-            // pthread_create(&thread[iScale], NULL, multiResize, (void *)&tdata);
-        }
-        // cudaDeviceSynchronize();
-
-        for (int i = 0; i < scale_num; i++) {
-            // pthread_join(thread[i], NULL);
-        }
+        endTime = cv::getTickCount();
+        TimeOpticalFlow_Step_2 += (endTime - startTime);
 
 
-        // std::cout << "Do Warp Optical flow..." << std::endl;
-
-        for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
-            multiDoOptCalc_tdata tdata;
-            tdata.d_prev_grey = &d_prev_grey_pyr[i];
-            tdata.d_grey = &d_grey_warp_pyr[i];
-            tdata.d_flow_x = &d_flow_warp_pyr_x[i];
-            tdata.d_flow_y = &d_flow_warp_pyr_y[i];
-            tdata.d_optCalc = &d_optCalc;
-            d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]); // , work_stream[i]);
-            // d_flow(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
-           // pthread_create(&thread[i], NULL, multiDoOptCalc, (void *)&tdata);
-        }
-        
-        for (int i = 0; i < scale_num; i++) {
-           // pthread_join(thread[i], NULL);
-        }
-        // std::cout << "Finished Warp Optical flow..." << std::endl;
-
-/*
+        startTime = cv::getTickCount(); 
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
             int width = d_grey_pyr[iScale].cols;
@@ -432,19 +427,7 @@ int main(int argc, char** argv)
     
                     float mean_x(0), mean_y(0), var_x(0), var_y(0), length(0);
                     if(IsValid(trajectory, mean_x, mean_y, var_x, var_y, length) && IsCameraMotion(displacement)) {
-                        // output the trajectory
-                        // printf("%d\t%f\t%f\t%f\t%f\t%f\t%f\t", frame_num, mean_x, mean_y, var_x, var_y, length, fscales[iScale]);
-
-                        // for spatio-temporal pyramid
-                        // printf("%f\t", std::min<float>(std::max<float>(mean_x/float(seqInfo.width), 0), 0.999));
-                        // printf("%f\t", std::min<float>(std::max<float>(mean_y/float(seqInfo.height), 0), 0.999));
-                        // printf("%f\t", std::min<float>(std::max<float>((frame_num - trackInfo.length/2.0 - start_frame)/float(seqInfo.length), 0), 0.999));
-                    
-                        // output the trajectory
-                        // for (int i = 0; i < trackInfo.length; ++i)
-                        //     printf("%f\t%f\t", displacement[i].x, displacement[i].y);
-        
-                        // printf("\n");
+                      
                     }
 
                     iTrack = tracks.erase(iTrack);
@@ -461,39 +444,70 @@ int main(int argc, char** argv)
             for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++)
                 points.push_back(iTrack->point[iTrack->index]);
             
-            // std::cout << "DenseSampling new point..." << std::endl;
-            DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
+            int64 s = cv::getTickCount(); 
+                DenseSample(d_grey_pyr[iScale], points, quality, min_distance);
+            int64 e = cv::getTickCount();
+            TimeDenseSample += (e - s);
             // save the new feature points
             for(unsigned i = 0; i < points.size(); i++)
                 tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
         }
-        std::cout << "End of Traj tracking..." << std::endl;
-*/
-        init_counter = 0;
-/*        d_grey.copyTo(d_prev_grey);
+        endTime = cv::getTickCount();
+        TimeCheckTraj += (endTime - startTime);
 
-        d_prev_kpts_surf = d_kpts_surf;
-        d_desc_surf.copyTo(d_prev_desc_surf);
-*/
+        init_counter = 0;
+
         swapMat(d_prev_grey, d_grey);
         swapMat(d_prev_kpts_surf, d_kpts_surf);
         swapMat(d_prev_desc_surf, d_desc_surf);
 
         frame_num++;
-
-        if( show_track == 1 ) {
-            imshow( "DenseTrackStab", d_image);
-            int c = cvWaitKey(3);
-            if((char)c == 27) break;
-        }
+        int64 eachRoundEndTime = cv::getTickCount();
+        TimeEachRound += (eachRoundEndTime - eachRoundStartTime);
     }
 
-    if( show_track == 1 )
-        destroyWindow("DenseTrackStab");
     gettimeofday(&end, NULL);
     secs_used=(end.tv_sec - start.tv_sec); //avoid overflow by subtracting first
     micros_used= ((secs_used*1000000) + end.tv_usec) - (start.tv_usec);
     printf("micros_used: %ld\n",micros_used);
-    printf("%lf\n", timeSum / timeCount / frequency*micro);
+    printf("GREY SIZE: %d, %d\n", d_grey.rows, d_grey.cols);
+    printf("TimeEachRound: %lf\n", 1.0 * TimeEachRound / timeCount / frequency*micro);
+    printf("TimeReadFrame: %lf\n", 1.0 * TimeReadFrame / timeCount / frequency*micro);
+    printf("TimeUpload: %lf\n", 1.0 * TimeUpload / timeCount / frequency*micro);
+    printf("TimeSurf_Step_1: %lf\n", 1.0 * TimeSurf_Step_1 / timeCount / frequency*micro);
+    printf("TimeSurfDownloadKeyPoint: %lf\n", 1.0 * TimeSurfDownloadKeyPoint / timeCount / frequency*micro);
+    printf("TimeComputeMatch: %lf\n", 1.0 * TimeComputeMatch / timeCount / frequency*micro);
+    printf("TimeResize_Step_1: %lf\n", 1.0 * TimeResize_Step_1 / timeCount / frequency*micro);
+    printf("TimeOpticalFlow_Step_1: %lf\n", 1.0 * TimeOpticalFlow_Step_1 / timeCount / frequency*micro);
+    printf("TimeMatchFlow: %lf\n", 1.0 * TimeMatchFlow / timeCount / frequency*micro);
+    printf("TimeMergeFlow: %lf\n", 1.0 * TimeMergeFlow / timeCount / frequency*micro);
+    printf("TimeFindHomography: %lf\n", 1.0 * TimeFindHomography / timeCount / frequency*micro);
+    printf("TimeWarpPerspective: %lf\n", 1.0 * TimeWarpPerspective / timeCount / frequency*micro);
+    printf("TimeResize_Step_2: %lf\n", 1.0 * TimeResize_Step_2 / timeCount / frequency*micro);
+    printf("TimeOpticalFlow_Step_2: %lf\n", 1.0 * TimeOpticalFlow_Step_2 / timeCount / frequency*micro);
+    printf("TimeDenseSample: %lf\n", 1.0 * TimeDenseSample / scale_num / timeCount / frequency*micro);
+    printf("TimeCheckTraj: %lf\n", 1.0 * TimeCheckTraj / timeCount / frequency*micro);
+
     return 0;
 }
+
+
+int main(int argc_m, char **argv_m)
+{
+    argc = argc_m;
+    argv = argv_m;
+    pthread_t thread_list[15];
+    int id[15];
+    setDevice(1);
+    Stream streams[15];
+
+    for (int i = 0; i < 15; i++)
+        id[i] = i;
+    for (int i = 0; i < 5; i++)
+        pthread_create(&thread_list[i], NULL, worker, &streams[i]);
+    for (int i = 0; i < 5; i++)
+        pthread_join(thread_list[i], NULL);
+
+}
+
+

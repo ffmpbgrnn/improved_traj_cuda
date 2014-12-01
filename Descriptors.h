@@ -279,7 +279,7 @@ void InitPry(const Mat& frame, std::vector<float>& scales, std::vector<Size>& si
 		nlayers++;
 	}
 
-	if(nlayers == 0) nlayers = 1; // at least 1 scale
+	if(nlayers == 0) nlayers = 1; // at least 1 scale 
 
 	scale_num = std::min<int>(scale_num, nlayers);
 
@@ -440,7 +440,7 @@ static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int fl
                 W = W ? INTER_TAB_SIZE/W : 0;
                 double fX = std::max((double)INT_MIN, std::min((double)INT_MAX, (X0 + M[0]*x1)*W));
                 double fY = std::max((double)INT_MIN, std::min((double)INT_MAX, (Y0 + M[3]*x1)*W));
-
+ 
 				double _X = fX/double(INTER_TAB_SIZE);
 				double _Y = fY/double(INTER_TAB_SIZE);
 
@@ -473,7 +473,7 @@ static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int fl
 }
 */
 void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyPoint>& kpts,
-				  const GpuMat& prev_desc, const GpuMat& desc, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts)
+				  const GpuMat& prev_desc, const GpuMat& desc, std::vector<Point2f>& prev_pts, std::vector<Point2f>& pts, Stream& stream)
 {
 	prev_pts.clear();
 	pts.clear();
@@ -488,7 +488,7 @@ void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyP
 	std::vector<DMatch> matches;
 
 	desc_matcher.match(desc, prev_desc, matches, gMask);
-
+	
 	prev_pts.reserve(matches.size());
 	pts.reserve(matches.size());
 
@@ -504,7 +504,7 @@ void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyP
 
 void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f>& pts1,
 				const std::vector<Point2f>& prev_pts2, const std::vector<Point2f>& pts2,
-				std::vector<Point2Df>& prev_pts_all, std::vector<Point2Df>& pts_all)
+				std::vector<Point2f>& prev_pts_all, std::vector<Point2f>& pts_all, Stream& stream)
 {
 	prev_pts_all.clear();
 	prev_pts_all.reserve(prev_pts1.size() + prev_pts2.size());
@@ -513,7 +513,7 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	pts_all.reserve(pts1.size() + pts2.size());
 
 	for(size_t i = 0; i < prev_pts1.size(); i++) {
-		Point2Df point;
+		Point2f point;
 		point.x = prev_pts1[i].x;
 		point.y = prev_pts1[i].y;
 		prev_pts_all.push_back(point);
@@ -523,7 +523,7 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	}
 
 	for(size_t i = 0; i < prev_pts2.size(); i++) {
-		Point2Df point;
+		Point2f point;
 		point.x = prev_pts2[i].x;
 		point.y = prev_pts2[i].y;
 		prev_pts_all.push_back(point);
@@ -536,24 +536,24 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	return;
 }
 
-void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x,
-	               const GpuMat& d_flow_y, std::vector<Point2f>& v_prev_pts,
-	               std::vector<Point2f>& pts, const GpuMat& d_mask)
+void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x, 
+	               const GpuMat& d_flow_y, std::vector<Point2f>& v_prev_pts, 
+	               std::vector<Point2f>& pts, const GpuMat& d_mask, Stream& stream)
 {
 	int width = d_prev_grey.cols;
 	int height = d_prev_grey.rows;
 
-	// int maxCorners, double qualityLevel, double minDistance
+	// int maxCorners, double qualityLevel, double minDistance 
 	GoodFeaturesToTrackDetector_GPU good_to_track(1000, 0.001, 3);
 	// SET: prev_pts one row matrix with CV_32FC2 type
 	GpuMat d_prev_pts;
 	good_to_track(d_prev_grey, d_prev_pts, d_mask);
 	// goodFeaturesToTrack(prev_grey, prev_pts, MAX_COUNT, 0.001, 3, mask);
 	download(d_prev_pts, v_prev_pts);
-
+	
 	if(v_prev_pts.size() == 0)
 		return;
-
+	
 	Mat flow_x(d_flow_x), flow_y(d_flow_y);
  //    d_flow_x.download(flow_x);
 
