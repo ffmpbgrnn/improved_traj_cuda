@@ -172,8 +172,6 @@ void *worker(void *args)
 		capture >> frame;
         endTime = cv::getTickCount();
 
-
-
         if(frame.empty())
             break;
 
@@ -181,7 +179,6 @@ void *worker(void *args)
             frame_num++;
             continue;
         }
-
 
         if(frame_num == start_frame) {
             d_image.create(frame.size(), CV_8UC3);
@@ -260,8 +257,6 @@ void *worker(void *args)
             surf.downloadKeypoints(d_kpts_surf, kpts_surf); // all 100us
         endTime = cv::getTickCount();
         TimeSurfDownloadKeyPoint += (endTime - startTime);
-
-
 
         // std::cout << prev_kpts_surf.size() << " " << kpts_surf.size() << std::endl;
 
