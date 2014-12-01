@@ -246,12 +246,15 @@ int main(int argc, char** argv)
         #endif
         gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
 
-        for(int iScale = 0; iScale < scale_num; iScale++) {
+/*************************************************************/
+        
+        d_grey_warp.copyTo(d_grey_warp_pyr[0]);
+       /* for(int iScale = 0; iScale < scale_num; iScale++) {
             if(iScale == 0)
                 d_grey_warp.copyTo(d_grey_warp_pyr[0]);
             else
                 resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR);
-        }
+        }*/
 
         #ifdef DEBUG
             std::cout << "Do Warp Optical flow..." << std::endl;

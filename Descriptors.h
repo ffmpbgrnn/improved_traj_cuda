@@ -279,7 +279,7 @@ void InitPry(const Mat& frame, std::vector<float>& scales, std::vector<Size>& si
 		nlayers++;
 	}
 
-	if(nlayers == 0) nlayers = 1; // at least 1 scale 
+	if(nlayers == 0) nlayers = 1; // at least 1 scale
 
 	scale_num = std::min<int>(scale_num, nlayers);
 
@@ -440,7 +440,7 @@ static void MyWarpPerspective(Mat& prev_src, Mat& src, Mat& dst, Mat& M0, int fl
                 W = W ? INTER_TAB_SIZE/W : 0;
                 double fX = std::max((double)INT_MIN, std::min((double)INT_MAX, (X0 + M[0]*x1)*W));
                 double fY = std::max((double)INT_MIN, std::min((double)INT_MAX, (Y0 + M[3]*x1)*W));
- 
+
 				double _X = fX/double(INTER_TAB_SIZE);
 				double _Y = fY/double(INTER_TAB_SIZE);
 
@@ -488,7 +488,7 @@ void ComputeMatch(const std::vector<KeyPoint>& prev_kpts, const std::vector<KeyP
 	std::vector<DMatch> matches;
 
 	desc_matcher.match(desc, prev_desc, matches, gMask);
-	
+
 	prev_pts.reserve(matches.size());
 	pts.reserve(matches.size());
 
@@ -536,24 +536,24 @@ void MergeMatch(const std::vector<Point2f>& prev_pts1, const std::vector<Point2f
 	return;
 }
 
-void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x, 
-	               const GpuMat& d_flow_y, std::vector<Point2f>& v_prev_pts, 
+void MatchFromFlow(const GpuMat& d_prev_grey, const GpuMat& d_flow_x,
+	               const GpuMat& d_flow_y, std::vector<Point2f>& v_prev_pts,
 	               std::vector<Point2f>& pts, const GpuMat& d_mask)
 {
 	int width = d_prev_grey.cols;
 	int height = d_prev_grey.rows;
 
-	// int maxCorners, double qualityLevel, double minDistance 
+	// int maxCorners, double qualityLevel, double minDistance
 	GoodFeaturesToTrackDetector_GPU good_to_track(1000, 0.001, 3);
 	// SET: prev_pts one row matrix with CV_32FC2 type
 	GpuMat d_prev_pts;
 	good_to_track(d_prev_grey, d_prev_pts, d_mask);
 	// goodFeaturesToTrack(prev_grey, prev_pts, MAX_COUNT, 0.001, 3, mask);
 	download(d_prev_pts, v_prev_pts);
-	
+
 	if(v_prev_pts.size() == 0)
 		return;
-	
+
 	Mat flow_x(d_flow_x), flow_y(d_flow_y);
  //    d_flow_x.download(flow_x);
 
