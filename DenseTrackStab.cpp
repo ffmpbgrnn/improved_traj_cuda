@@ -6,6 +6,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <pthread.h>
+
 using namespace cv;
 using namespace cv::gpu;
 
@@ -30,6 +32,46 @@ void swapMat(GpuMat& prev, GpuMat& cur)
     prev = cur;
     cur = tmp;
 }
+typedef struct multiResize_tdata
+{
+    int iScale;
+    GpuMat* d_grey;
+    GpuMat* d_grey_pyr;
+} multiResize_tdata;
+
+void *multiResize(void *ptr)
+{
+    setDevice(1);
+    multiResize_tdata *tdata_ptr = (multiResize_tdata *)ptr;
+    
+    int iScale = tdata_ptr->iScale;
+    GpuMat& d_grey = *(tdata_ptr->d_grey);
+    GpuMat& d_grey_pyr = *(tdata_ptr->d_grey_pyr);
+
+    if(iScale == 0) {
+        d_grey.copyTo(d_grey_pyr);
+    } else {
+        resize(d_grey, d_grey_pyr, d_grey_pyr.size(), 0, 0, INTER_LINEAR);
+    }
+    return (void *)0;
+}
+
+typedef struct multiDoOptCalc_tdata
+{
+    FarnebackOpticalFlow *d_optCalc;
+    GpuMat *d_prev_grey;
+    GpuMat *d_grey;
+    GpuMat *d_flow_x;
+    GpuMat *d_flow_y;
+} multiDoOptCalc_tdata;
+
+void* multiDoOptCalc(void *ptr)
+{
+    multiDoOptCalc_tdata *tdata_ptr = (multiDoOptCalc_tdata *)ptr;
+    FarnebackOpticalFlow d_optCalc = *(tdata_ptr->d_optCalc);
+    d_optCalc(*tdata_ptr->d_prev_grey, *tdata_ptr->d_grey, *tdata_ptr->d_flow_x, *tdata_ptr->d_flow_y);
+    return (void *)0;
+}
 
 int main(int argc, char** argv)
 {
@@ -37,7 +79,7 @@ int main(int argc, char** argv)
     long secs_used,micros_used;
 
     gettimeofday(&start, NULL);
-    gpu::setDevice(1);
+    setDevice(1);
     VideoCapture capture;
     char* video = argv[1];
     int flag = arg_parse(argc, argv);
@@ -95,12 +137,19 @@ int main(int argc, char** argv)
     SURF_GPU surf;
     surf.nOctaves = 2;
     int frame_num = 0;
+    Stream work_stream[scale_num];
+    int64 startTime, endTime;
+    double frequency = cv::getTickFrequency();
+    const int micro = 1000*1000;
 
+    int64 timeSum = 0;
+    int64 timeCount = 0;
     while(true) {
         Mat frame;
         std::cout << frame_num << std::endl;
         // get a new frame
         capture >> frame;
+
         if(frame.empty())
             break;
 
@@ -174,56 +223,97 @@ int main(int argc, char** argv)
             InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
             d_human_mask.upload(human_mask);
         }
-
-        std::cout << "surf..." << std::endl;
+        
+                // std::cout << "surf..." << std::endl;
         // surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
         GpuMat d_kpts_surf, d_desc_surf;
         surf(d_grey, d_human_mask, d_kpts_surf, d_desc_surf);
 
         std::vector<KeyPoint> prev_kpts_surf, kpts_surf;
+       
+       
         surf.downloadKeypoints(d_prev_kpts_surf, prev_kpts_surf);
-        surf.downloadKeypoints(d_kpts_surf, kpts_surf);
+        surf.downloadKeypoints(d_kpts_surf, kpts_surf); // all 100us
 
+        
 
-        std::cout << "Matching Surf..." << std::endl;
+        // std::cout << prev_kpts_surf.size() << " " << kpts_surf.size() << std::endl;
+
+        // std::cout << "Matching Surf..." << std::endl;
         std::vector<Point2f> prev_pts_surf, pts_surf;
-        ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf);
-
-
-        // compute optical flow for all scales once
+        ComputeMatch(prev_kpts_surf, kpts_surf, d_prev_desc_surf, d_desc_surf, prev_pts_surf, pts_surf); // 7500us
+                // std::cout << (endTime - startTime)/frequency*micro << ",\t" << std::endl;
+                // compute optical flow for all scales once
         FarnebackOpticalFlow d_optCalc;
         d_optCalc.polyN     = 7;
         d_optCalc.polySigma = 1.5; 
         d_optCalc.winSize   = 10;
         d_optCalc.numIters  = 2;
+        d_optCalc.numLevels = 1;
+        d_optCalc.fastPyramids = true;
+
+        BroxOpticalFlow d_flow(0.197, 50, 0.5, 10, 77, 10);
         // GpuMat d_flowx, d_flowy;
+        pthread_t thread[scale_num];
+        // 65us
         for(int iScale = 0; iScale < scale_num; iScale++) {
+            multiResize_tdata tdata;
+            tdata.iScale = iScale;
+            tdata.d_grey = &d_grey;
+            tdata.d_grey_pyr = &d_grey_pyr[iScale];
             if(iScale == 0)
                 d_grey.copyTo(d_grey_pyr[0]);
-            else
+            else {
                 resize(d_grey_pyr[iScale-1], d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
+                // resize(d_grey, d_grey_pyr[iScale], d_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR, work_stream[iScale]);
+            }
+            
+            // pthread_create(&thread[iScale], NULL, multiResize, (void *)&tdata);
+        }
+                // cudaDeviceSynchronize();
+        for (int i = 0; i < scale_num; i++) {
+            // pthread_join(thread[i], NULL);
         }
 
-        std::cout << "Optical flow->two frames..." << std::endl;
+        // std::cout << "Optical flow->two frames..." << std::endl;
+        // 10000us
+	startTime = cv::getTickCount(); 
+
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
-            d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i]);
-        }
+            multiDoOptCalc_tdata tdata;
+            tdata.d_prev_grey = &d_prev_grey_pyr[i];
+            tdata.d_grey = &d_grey_pyr[i];
+            tdata.d_flow_x = &d_flow_pyr_x[i];
+            tdata.d_flow_y = &d_flow_pyr_y[i];
+            tdata.d_optCalc = &d_optCalc;
+            d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], work_stream[i]);
+            // d_flow(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i]);
 
+            // pthread_create(&thread[i], NULL, multiDoOptCalc, (void *)&tdata);
+        }
+        endTime = cv::getTickCount();
+        timeSum += (endTime - startTime);
+        timeCount++;
+       
+
+        for (int i = 0; i < scale_num; i++) {
+            // pthread_join(thread[i], NULL);
+        }
 
         // Do goodFeatureToTrack here
-        std::cout << "find Good feature point Optical flow..." << std::endl;
+        // std::cout << "find Good feature point Optical flow..." << std::endl;
         std::vector<Point2f> prev_pts_flow, pts_flow;
         MatchFromFlow(d_prev_grey, d_flow_pyr_x[0], d_flow_pyr_y[0], prev_pts_flow, pts_flow, d_human_mask);
 
         std::vector<Point2Df> prev_pts_all, pts_all;
 
-        std::cout << "Merge SURF and Optical flow..." << std::endl;
+        // std::cout << "Merge SURF and Optical flow..." << std::endl;
         MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all);
 
 
-        std::cout << "Find Homography..." << std::endl;
+        // std::cout << "Find Homography..." << std::endl;
         Mat H = Mat::eye(3, 3, CV_64FC1);
-/*        if(pts_all.size() > 50) {
+        if(pts_all.size() > 50) {
             std::vector<char> match_mask;
             // Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
             const double CONFIDENCE = 0.99;
@@ -241,28 +331,53 @@ int main(int argc, char** argv)
             // if(countNonZero(Mat(match_mask)) > 25)
             //     H = temp;
         }
-*/
+
         Mat H_inv = H.inv();
         // GpuMat d_H_inv(H_inv);
         GpuMat d_grey_warp; // = GpuMat::zeros(grey.size(), CV_8UC1);
-        std::cout << "Warp..." << std::endl;
+        // std::cout << "Warp..." << std::endl;
         gpu::warpPerspective(d_prev_grey, d_grey_warp, H_inv, d_prev_grey.size());
 
-/*
+
         for(int iScale = 0; iScale < scale_num; iScale++) {
+            multiResize_tdata tdata;
+            tdata.iScale = iScale;
+            tdata.d_grey = &d_grey_warp;
+            tdata.d_grey_pyr = &d_grey_warp_pyr[iScale];
             if(iScale == 0)
                 d_grey_warp.copyTo(d_grey_warp_pyr[0]);
-            else
+            else {
                 resize(d_grey_warp_pyr[iScale-1], d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR);
+                // resize(d_grey_warp, d_grey_warp_pyr[iScale], d_grey_warp_pyr[iScale].size(), 0, 0, INTER_LINEAR, work_stream[iScale]);
+            }
+            // pthread_create(&thread[iScale], NULL, multiResize, (void *)&tdata);
         }
-*/
-/*
-        std::cout << "Do Warp Optical flow..." << std::endl;
+        // cudaDeviceSynchronize();
+
+        for (int i = 0; i < scale_num; i++) {
+            // pthread_join(thread[i], NULL);
+        }
+
+
+        // std::cout << "Do Warp Optical flow..." << std::endl;
+
         for (unsigned int i = 0; i < d_prev_grey_pyr.size(); i++) {
-            d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
+            multiDoOptCalc_tdata tdata;
+            tdata.d_prev_grey = &d_prev_grey_pyr[i];
+            tdata.d_grey = &d_grey_warp_pyr[i];
+            tdata.d_flow_x = &d_flow_warp_pyr_x[i];
+            tdata.d_flow_y = &d_flow_warp_pyr_y[i];
+            tdata.d_optCalc = &d_optCalc;
+            d_optCalc(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]); // , work_stream[i]);
+            // d_flow(d_prev_grey_pyr[i], d_grey_warp_pyr[i], d_flow_warp_pyr_x[i], d_flow_warp_pyr_y[i]);
+           // pthread_create(&thread[i], NULL, multiDoOptCalc, (void *)&tdata);
         }
-        std::cout << "Finished Warp Optical flow..." << std::endl;
-*/
+        
+        for (int i = 0; i < scale_num; i++) {
+           // pthread_join(thread[i], NULL);
+        }
+        // std::cout << "Finished Warp Optical flow..." << std::endl;
+
 /*
         for(int iScale = 0; iScale < scale_num; iScale++) {
 
@@ -379,6 +494,6 @@ int main(int argc, char** argv)
     secs_used=(end.tv_sec - start.tv_sec); //avoid overflow by subtracting first
     micros_used= ((secs_used*1000000) + end.tv_usec) - (start.tv_usec);
     printf("micros_used: %ld\n",micros_used);
-
+    printf("%lf\n", timeSum / timeCount / frequency*micro);
     return 0;
 }
