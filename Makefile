@@ -23,4 +23,18 @@ LDFLAGS = -L/opt/lib -L/usr/local/lib -L/opt/cuda/lib64 -L/usr/local/cuda-6.5/li
 LDFLAGS_debug := -ggdb
 LDFLAGS_release := -O3 -ggdb
 
-include make/generic.mk
+/*#include make/generic.mk*/
+
+CC := g++
+EXEC = DenseTrackStab
+SOURCES = $(wildcard *.cpp)
+OBJECTS = $(SOURCES:.cpp=.o)
+
+$(EXEC): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $(EXEC) $(LDFLAGS) $(LDLIBS)
+
+%.o: %.cpp
+	$(CC) -c $(CXXFLAGS) $(CXXFLAGS_debug) $< -o $@
+
+clean:
+	rm -rf *.o

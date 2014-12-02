@@ -10,7 +10,7 @@
 
 using namespace cv;
 using namespace cv::gpu;
-
+#define DEVICE_NUM 0
 int show_track = 0; // set show_track = 1, if you want to visualize the trajectories
 int calcSize(int octave, int layer)
 {
@@ -41,7 +41,7 @@ typedef struct multiResize_tdata
 
 void *multiResize(void *ptr)
 {
-    setDevice(1);
+    setDevice(DEVICE_NUM);
     multiResize_tdata *tdata_ptr = (multiResize_tdata *)ptr;
 
     int iScale = tdata_ptr->iScale;
@@ -81,7 +81,7 @@ void *worker(void *args)
 
     Stream& streams = *(Stream *)args;
     gettimeofday(&start, NULL);
-    setDevice(1);
+    setDevice(DEVICE_NUM);
     VideoCapture capture;
     char* video = argv[1];
     int flag = arg_parse(argc, argv);
@@ -505,7 +505,7 @@ int main(int argc_m, char **argv_m)
     const int STREAM_NUM = 15;
     pthread_t thread_list[STREAM_NUM];
     int id[15];
-    setDevice(1);
+    setDevice(DEVICE_NUM);
     Stream streams[STREAM_NUM];
 
     for (int i = 0; i < STREAM_NUM; i++)
