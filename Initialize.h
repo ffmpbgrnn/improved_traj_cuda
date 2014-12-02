@@ -3,8 +3,8 @@
 
 #include "DenseTrackStab.h"
 
-using namespace cv;
 
+using namespace cv;
 void InitTrackInfo(TrackInfo* trackInfo, int track_length, int init_gap)
 {
 	trackInfo->length = track_length;
@@ -122,7 +122,7 @@ bool arg_parse(int argc, char** argv)
 		break;
 		case 'I':
 		init_gap = atoi(optarg);
-		break;	
+		break;
 		case 'H':
 		bb_file = optarg;
 		break;

@@ -27,30 +27,30 @@
 #include "DataTypes.h"
 
 using namespace cv;
-
-int start_frame = 0;
-int end_frame = INT_MAX;
-int scale_num = 8;
-const float scale_stride = sqrt(2);
-char* bb_file = NULL;
+extern int start_frame;
+extern int end_frame;
+extern int scale_num;
+extern const float scale_stride;
+extern char* bb_file;
 
 // parameters for descriptors
-int patch_size = 32;
-int nxy_cell = 2;
-int nt_cell = 3;
-float epsilon = 0.05;
-const float min_flow = 0.4;
+extern int patch_size;
+extern int nxy_cell;
+extern int nt_cell;
+extern float epsilon;
+extern const float min_flow;
 
 // parameters for tracking
-double quality = 0.001;
-int min_distance = 5;
-int init_gap = 1;
-int track_length = 15;
+extern double quality;
+extern int min_distance;
+extern int init_gap;
+extern int track_length;
 
 // parameters for rejecting trajectory
-const float min_var = sqrt(3);
-const float max_var = 50;
-const float max_dis = 20;
+extern const float min_var;
+extern const float max_var;
+extern const float max_dis;
+
 
 typedef struct {
 	int x;       // top left corner
@@ -67,19 +67,19 @@ typedef struct {
 
 typedef struct {
     int length;  // length of the trajectory
-    int gap;     // initialization gap for feature re-sampling 
+    int gap;     // initialization gap for feature re-sampling
 }TrackInfo;
 
 typedef struct {
     int nBins;   // number of bins for vector quantization
-    bool isHof; 
+    bool isHof;
     int nxCells; // number of cells in x direction
-    int nyCells; 
+    int nyCells;
     int ntCells;
     int dim;     // dimension of the descriptor
     int height;  // size of the block for computing the descriptor
     int width;
-}DescInfo; 
+}DescInfo;
 
 // integral histogram for the descriptors
 typedef struct {
@@ -138,7 +138,7 @@ class Frame
 public:
 	int frameID;
 	std::vector<BoundBox> BBs;
-	
+
 	Frame(const int& frame_)
 	{
 		frameID = frame_;

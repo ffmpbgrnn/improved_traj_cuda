@@ -11,6 +11,31 @@
 using namespace cv;
 using namespace cv::gpu;
 #define DEVICE_NUM 0
+int start_frame = 0;
+int end_frame = INT_MAX;
+int scale_num = 8;
+const float scale_stride = sqrt(2);
+char* bb_file = NULL;
+
+// parameters for descriptors
+int patch_size = 32;
+int nxy_cell = 2;
+int nt_cell = 3;
+float epsilon = 0.05;
+const float min_flow = 0.4;
+
+// parameters for tracking
+double quality = 0.001;
+int min_distance = 5;
+int init_gap = 1;
+int track_length = 15;
+
+// parameters for rejecting trajectory
+const float min_var = sqrt(3);
+const float max_var = 50;
+const float max_dis = 20;
+
+
 int show_track = 0; // set show_track = 1, if you want to visualize the trajectories
 int calcSize(int octave, int layer)
 {
@@ -267,7 +292,7 @@ void *worker(void *args)
         TimeComputeMatch += (endTime - startTime);
 
         // 65us
-        /*        
+        /*
         startTime = cv::getTickCount();
             for(int iScale = 0; iScale < scale_num; iScale++) {
                 if(iScale == 0)
