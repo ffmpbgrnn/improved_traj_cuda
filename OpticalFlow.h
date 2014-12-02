@@ -26,6 +26,7 @@ public:
         polyN = 5;
         polySigma = 1.1;
         flags = 0;
+        isFirst = true;
         // isDeviceArch11_ = !DeviceInfo().supports(FEATURE_SET_COMPUTE_12);
     }
 
@@ -39,7 +40,7 @@ public:
     int flags;
 
     void operator ()(const GpuMat& frame0, const GpuMat& frame1, 
-    				 GpuMat *flowx[], GpuMat *flowy[], 
+    				 std::vector<GpuMat>& flowx, std::vector<GpuMat>& flowy, 
     				 const std::vector<float>& fscales, const std::vector<Size>& fsize,
     				 Stream &s = Stream::Null());
 	void setConstant();
@@ -76,6 +77,7 @@ private:
 
     GpuMat frames_[2];
     GpuMat pyrLevel_[2], M_, bufM_, R_[2], blurredFrame_[2];
+    bool isFirst; 
     std::vector<GpuMat> pyramid0_, pyramid1_;
 
     // bool isDeviceArch11_;

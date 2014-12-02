@@ -54,9 +54,10 @@ namespace cv { namespace gpu { namespace device
     {
         texture<float, cudaTextureType2D, cudaReadModeElementType> eigTex(0, cudaFilterModePoint, cudaAddressModeClamp);
 
-        __device__ uint g_counter = 0;
+        // __device__ uint g_counter = 0;
 
-        template <class Mask> __global__ void findCorners(float threshold, const Mask mask, float2* corners, uint max_count, int rows, int cols)
+        template <class Mask> __global__ void findCorners(
+            float threshold, const Mask mask, float2* corners, uint max_count, int rows, int cols, uint *g_counter_ptr)
         {
             #if __CUDA_ARCH__ >= 110
 
@@ -84,7 +85,7 @@ namespace cv { namespace gpu { namespace device
 
                     if (val == maxVal)
                     {
-                        const uint ind = atomicInc(&g_counter, (uint)(-1));
+                        const uint ind = atomicInc(g_counter_ptr, (uint)(-1));
 
                         if (ind < max_count)
                             corners[ind] = make_float2(j, i);
@@ -97,10 +98,11 @@ namespace cv { namespace gpu { namespace device
 
         int findCorners_gpu(PtrStepSzf eig, float threshold, PtrStepSzb mask, float2* corners, int max_count)
         {
-            void* counter_ptr;
-            cudaSafeCall( cudaGetSymbolAddress(&counter_ptr, g_counter) );
+            uint *d_counter_ptr;
+            cudaSafeCall( cudaMalloc((void **)&d_counter_ptr, sizeof(uint)) );
+            // cudaSafeCall( cudaGetSymbolAddress(&d_counter_ptr, g_counter) );
 
-            cudaSafeCall( cudaMemset(counter_ptr, 0, sizeof(uint)) );
+            cudaSafeCall( cudaMemset(d_counter_ptr, 0, sizeof(uint)) );
 
             bindTexture(&eigTex, eig);
 
@@ -108,16 +110,16 @@ namespace cv { namespace gpu { namespace device
             dim3 grid(divUp(eig.cols, block.x), divUp(eig.rows, block.y));
 
             if (mask.data)
-                findCorners<<<grid, block>>>(threshold, SingleMask(mask), corners, max_count, eig.rows, eig.cols);
+                findCorners<<<grid, block>>>(threshold, SingleMask(mask), corners, max_count, eig.rows, eig.cols, d_counter_ptr);
             else
-                findCorners<<<grid, block>>>(threshold, WithOutMask(), corners, max_count, eig.rows, eig.cols);
+                findCorners<<<grid, block>>>(threshold, WithOutMask(), corners, max_count, eig.rows, eig.cols, d_counter_ptr);
 
             cudaSafeCall( cudaGetLastError() );
 
             cudaSafeCall( cudaDeviceSynchronize() );
 
             uint count;
-            cudaSafeCall( cudaMemcpy(&count, counter_ptr, sizeof(uint), cudaMemcpyDeviceToHost) );
+            cudaSafeCall( cudaMemcpy(&count, d_counter_ptr, sizeof(uint), cudaMemcpyDeviceToHost) );
 
             return min(count, max_count);
         }

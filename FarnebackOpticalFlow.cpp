@@ -6,6 +6,7 @@
 
 using namespace cv;
 using namespace gpu;
+using namespace device;
 namespace traj { namespace gpu { namespace device { namespace optflow_farneback
 {
     void setPolynomialExpansionConsts(
@@ -152,7 +153,7 @@ void traj::gpu::FarnebackOpticalFlow::setConstant()
 
 void traj::gpu::FarnebackOpticalFlow::operator ()(
         const GpuMat &frame0, const GpuMat &frame1, 
-        GpuMat *flow_pyr_x[], GpuMat *flow_pyr_y[], 
+        std::vector<GpuMat>& flow_pyr_x, std::vector<GpuMat>& flow_pyr_y, 
         const std::vector<float>& fscales, const std::vector<Size>& fsize, Stream &s)
 {
     CV_Assert(frame0.channels() == 1 && frame1.channels() == 1);
@@ -295,8 +296,8 @@ void traj::gpu::FarnebackOpticalFlow::operator ()(
 
         prevFlowX = curFlowX;
         prevFlowY = curFlowY;
-        curFlowX.copyTo(*flow_pyr_x[k]);
-        curFlowY.copyTo(*flow_pyr_y[k]);
+        curFlowX.copyTo(flow_pyr_x[k]);
+        curFlowY.copyTo(flow_pyr_y[k]);
     }
 
 /*    flowx = curFlowX;

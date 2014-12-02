@@ -299,7 +299,7 @@ void *worker(void *args)
         d_optCalc.numIters  = 2;
         d_optCalc.numLevels = scale_num;
         d_optCalc.fastPyramids = true;
-        d_optCalc(d_prev_grey_pyr[i], d_grey_pyr[i], d_flow_pyr_x[i], d_flow_pyr_y[i], streams);
+        d_optCalc(d_prev_grey, d_grey, d_flow_pyr_x, d_flow_pyr_y, fscales, sizes, streams);
 
         endTime = cv::getTickCount();
         TimeOpticalFlow_Step_1 += (endTime - startTime);
