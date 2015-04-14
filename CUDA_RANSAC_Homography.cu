@@ -5,7 +5,7 @@
 #include <numeric>
 #include <omp.h>
 #include <assert.h>
-#include "CUDA_SVD.cu"
+#include "CUDA_SVD.h"
 
 static const int NTHREADS = 256; // threads per block
 

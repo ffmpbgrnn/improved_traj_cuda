@@ -2,13 +2,8 @@
 #define OPTICALFLOW_H_
 
 #include "DenseTrackStab.h"
-#include "include/precomp.hpp"
 
 #include <time.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <npp.h>
-#include <opencv2/gpu/stream_accessor.hpp>
 using namespace cv;
 using namespace gpu;
 
@@ -38,8 +33,8 @@ public:
     double polySigma;
     int flags;
 
-    void operator ()(const GpuMat& frame0, const GpuMat& frame1, 
-    				 GpuMat *flowx[], GpuMat *flowy[], 
+    void operator ()(const GpuMat& frame0, const GpuMat& frame1,
+    				 GpuMat *flowx[], GpuMat *flowy[],
     				 const std::vector<float>& fscales, const std::vector<Size>& fsize,
     				 Stream &s = Stream::Null());
 	void setConstant();
